@@ -85,7 +85,7 @@ export default function VideoCallModal({ onCallEnd, onClose }: VideoCallModalPro
     if (pollRef.current) clearInterval(pollRef.current);
     pollRef.current = null;
     if (peerRef.current) {
-      try { peerRef.current.destroy(); } catch {}
+      try { peerRef.current.destroy(); } catch { }
       peerRef.current = null;
     }
     if (streamRef.current) {
@@ -177,7 +177,7 @@ export default function VideoCallModal({ onCallEnd, onClose }: VideoCallModalPro
         recognitionRef.current.onerror = null;
         recognitionRef.current.onresult = null;
         recognitionRef.current.abort();
-      } catch {}
+      } catch { }
       recognitionRef.current = null;
     }
     setIsListening(false);
@@ -231,7 +231,7 @@ export default function VideoCallModal({ onCallEnd, onClose }: VideoCallModalPro
               return [...prev, { role: "patient", text: msg.text, timestamp: Date.now() }];
             });
           }
-        } catch {}
+        } catch { }
       });
 
       peer.on("close", () => {
@@ -255,7 +255,7 @@ export default function VideoCallModal({ onCallEnd, onClose }: VideoCallModalPro
             setConnectionState((prev) => (prev === "waiting" ? "connecting" : prev));
             for (const s of signals) peer.signal(s);
           }
-        } catch {}
+        } catch { }
       }, POLL_INTERVAL);
     } catch (error: any) {
       console.error("Failed to create call:", error);
@@ -290,12 +290,11 @@ export default function VideoCallModal({ onCallEnd, onClose }: VideoCallModalPro
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-white/10">
         <div className="flex items-center gap-3">
-          <div className={`h-3 w-3 rounded-full ${
-            connectionState === "connected" ? "bg-emerald-500 animate-pulse"
-              : connectionState === "connecting" ? "bg-yellow-500 animate-pulse"
+          <div className={`h-3 w-3 rounded-full ${connectionState === "connected" ? "bg-emerald-500 animate-pulse"
+            : connectionState === "connecting" ? "bg-yellow-500 animate-pulse"
               : connectionState === "ended" ? "bg-red-500"
-              : "bg-white/20"
-          }`} />
+                : "bg-white/20"
+            }`} />
           <h2 className="text-sm font-black uppercase tracking-widest">
             {connectionState === "creating" && "Initializing..."}
             {connectionState === "waiting" && "Waiting for Patient"}
@@ -309,11 +308,10 @@ export default function VideoCallModal({ onCallEnd, onClose }: VideoCallModalPro
             <Button
               onClick={() => isListening ? stopRecognition() : startRecognition()}
               variant="outline"
-              className={`h-9 px-4 rounded-lg text-xs font-bold border ${
-                isListening
-                  ? "border-emerald-500/30 text-emerald-400 bg-emerald-500/10"
-                  : "border-white/10 text-muted-foreground"
-              }`}
+              className={`h-9 px-4 rounded-lg text-xs font-bold border ${isListening
+                ? "border-emerald-500/30 text-emerald-400 bg-emerald-500/10"
+                : "border-white/10 text-muted-foreground"
+                }`}
             >
               {isListening ? <Mic className="h-3.5 w-3.5 mr-1.5" /> : <MicOff className="h-3.5 w-3.5 mr-1.5" />}
               {isListening ? "Listening (si)" : "Mic Off — Click to Start"}
@@ -397,9 +395,8 @@ export default function VideoCallModal({ onCallEnd, onClose }: VideoCallModalPro
               </div>
             ) : (
               transcriptLines.map((line, i) => (
-                <div key={i} className={`p-2.5 rounded-lg text-xs ${
-                  line.role === "doctor" ? "bg-primary/10 border border-primary/20 ml-2" : "bg-violet-500/10 border border-violet-500/20 mr-2"
-                }`}>
+                <div key={i} className={`p-2.5 rounded-lg text-xs ${line.role === "doctor" ? "bg-primary/10 border border-primary/20 ml-2" : "bg-violet-500/10 border border-violet-500/20 mr-2"
+                  }`}>
                   <span className={`text-[9px] font-black uppercase tracking-widest ${line.role === "doctor" ? "text-primary" : "text-violet-400"}`}>
                     {line.role}:
                   </span>
