@@ -101,12 +101,14 @@ class WorkflowService:
         """Readiness check for remote KRA and ORA providers."""
         kra_ok = self._kra.health_check()
         ora_ok = self._ora.health_check()
+        gemini_keys = ORAClient._load_api_keys()
         diagnostics = {
             "kra_provider": "huggingface_api",
             "ora_provider": "gemini_api",
             "kra_api_url_configured": bool(os.getenv("KRA_API_URL", "").strip()),
-            "gemini_model": "gemini-1.5-pro",
-            "gemini_api_key_configured": bool(os.getenv("GEMINI_API_KEY", "").strip()),
+            "gemini_model": os.getenv("GEMINI_MODEL", "gemini-1.5-flash").strip(),
+            "gemini_api_key_configured": bool(gemini_keys),
+            "gemini_key_count": len(gemini_keys),
         }
         return {
             "kra": kra_ok,

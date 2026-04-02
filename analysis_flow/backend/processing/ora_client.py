@@ -103,6 +103,25 @@ def _extract_gemini_text(payload: Dict[str, Any]) -> str:
     return ""
 
 
+def _extract_google_error_reason(payload: Dict[str, Any]) -> str:
+    """Extract canonical googleapis error reason (e.g. API_KEY_INVALID)."""
+    error = payload.get("error")
+    if not isinstance(error, dict):
+        return ""
+
+    details = error.get("details")
+    if isinstance(details, list):
+        for item in details:
+            if not isinstance(item, dict):
+                continue
+            reason = str(item.get("reason") or "").strip()
+            if reason:
+                return reason.upper()
+
+    reason = str(error.get("status") or "").strip()
+    return reason.upper()
+
+
 def _to_text_list(value: Any, *, max_items: int = 6) -> list[str]:
     """Normalize KRA fields into short plain-text lists."""
     if value is None:
@@ -381,6 +400,22 @@ class ORAClient:
     def _model_url(self) -> str:
         return f"{self._api_base}/models/{self._model}"
 
+    @staticmethod
+    def _should_try_next_key(status_code: int, error_reason: str) -> bool:
+        """Decide whether the request should rotate to the next configured key."""
+        if status_code in {429, 500, 502, 503, 504}:
+            return True
+
+        retryable_reasons = {
+            "API_KEY_INVALID",
+            "INVALID_ARGUMENT",
+            "PERMISSION_DENIED",
+            "UNAUTHENTICATED",
+            "RESOURCE_EXHAUSTED",
+            "QUOTA_EXCEEDED",
+        }
+        return status_code in {400, 401, 403} and error_reason in retryable_reasons
+
     def refine(
         self,
         *,
@@ -459,17 +494,25 @@ class ORAClient:
             if cancel_event and cancel_event.is_set():
                 raise RuntimeError("ANALYSIS_CANCELLED")
 
-            if response.status_code in {429, 500, 502, 503, 504}:
-                detail = response.text[:160].replace("\n", " ")
-                attempt_errors.append(f"attempt_{attempt + 1}:http_{response.status_code}:{detail}")
-                continue
+            response_payload_candidate: Dict[str, Any] = {}
+            try:
+                response_payload_candidate = response.json()
+            except ValueError:
+                response_payload_candidate = {}
+
             if response.status_code >= 400:
-                detail = response.text[:500]
+                detail = response.text[:300].replace("\n", " ")
+                error_reason = _extract_google_error_reason(response_payload_candidate)
+                attempt_errors.append(
+                    f"attempt_{attempt + 1}:http_{response.status_code}:{error_reason or detail}"
+                )
+                if self._should_try_next_key(response.status_code, error_reason):
+                    continue
                 raise RuntimeError(f"ORA_GEMINI_HTTP_{response.status_code}:{detail}")
 
             try:
-                response_payload = response.json()
-            except ValueError as exc:
+                response_payload = response_payload_candidate or response.json()
+            except ValueError:
                 attempt_errors.append(f"attempt_{attempt + 1}:invalid_json")
                 continue
 
