@@ -12,7 +12,7 @@ import re
 import statistics
 from datetime import datetime
 from html.parser import HTMLParser
-from typing import Optional
+from typing import Optional, List, Dict, Any, Tuple
 from urllib.error import URLError, HTTPError
 from urllib.request import Request, urlopen
 
@@ -53,13 +53,170 @@ class _HTMLTextExtractor(HTMLParser):
         return "\n".join(self._parts)
 
 
-class LabAgentService:
-    """Step-2 lab agent: evidence ingestion, retrieval, Gemini analysis, citation checks."""
+class SriLankaLabGuidelines:
+    """Sri Lanka-specific laboratory guidelines and reference ranges."""
+    
+    # National reference ranges for Sri Lankan population
+    NATIONAL_REFERENCE_RANGES = {
+        "troponin": {"normal": "<0.04", "borderline": "0.04-0.4", "high": ">0.4", "unit": "ng/mL"},
+        "hs_troponin": {"normal": "<14", "borderline": "14-30", "high": ">30", "unit": "ng/L"},
+        "bnp": {"normal": "<100", "borderline": "100-400", "high": ">400", "unit": "pg/mL"},
+        "nt_probnp": {"normal": "<125", "borderline": "125-450", "high": ">450", "unit": "pg/mL"},
+        "creatinine": {"male": "0.6-1.2", "female": "0.5-1.1", "unit": "mg/dL"},
+        "hemoglobin": {"male": "13.5-17.5", "female": "12.0-15.5", "unit": "g/dL"},
+        "ldl": {"normal": "<100", "borderline": "100-129", "high": ">130", "unit": "mg/dL"},
+        "hdl": {"male": ">40", "female": ">50", "unit": "mg/dL"},
+        "triglycerides": {"normal": "<150", "borderline": "150-199", "high": ">200", "unit": "mg/dL"},
+        "glucose_fasting": {"normal": "70-99", "prediabetes": "100-125", "diabetes": ">126", "unit": "mg/dL"},
+        "hba1c": {"normal": "<5.7", "prediabetes": "5.7-6.4", "diabetes": ">6.5", "unit": "%"},
+        "crp": {"normal": "<10", "elevated": ">10", "unit": "mg/L"},
+        "alt": {"normal": "10-40", "unit": "U/L"},
+        "ast": {"normal": "10-40", "unit": "U/L"},
+        "sodium": {"normal": "135-145", "unit": "mmol/L"},
+        "potassium": {"normal": "3.5-5.1", "unit": "mmol/L"},
+    }
+    
+    # Sri Lanka-specific epidemiological patterns
+    EPIDEMIOLOGY = {
+        "high_prevalence": ["diabetes", "hypertension", "dyslipidemia", "ckd"],
+        "emerging_threats": ["heart_failure", "acute_coronary_syndrome"],
+        "rural_considerations": ["limited_lab_access", "delayed_presentation", "medication_nonadherence"],
+        "public_health_priorities": ["non_communicable_diseases", "ckd_u", "cardiovascular_risk_screening"],
+    }
+    
+    # Laboratory levels in Sri Lankan healthcare system
+    LABORATORY_LEVELS = {
+        "primary": ["basic_fbc", "urinalysis", "blood_sugar", "lipid_profile_basic"],
+        "secondary": ["full_biochemistry", "hormone_assays", "basic_cardiac_markers"],
+        "tertiary": ["hs_troponin", "bnp_nt_probnp", "specialized_assays", "molecular_diagnostics"],
+        "reference": ["research_protocols", "esoteric_tests", "international_standards"],
+    }
+    
+    @classmethod
+    def get_sri_lankan_guideline_sources(cls) -> List[Dict[str, Any]]:
+        """Return all Sri Lankan guideline sources to ingest."""
+        return [
+            {
+                "name": "Sri Lanka National Health Laboratory Policy 2006",
+                "url": "https://www.health.gov.lk/wp-content/uploads/2022/10/13-National-Health-Laboratory-Policy-2006.pdf",
+                "source_type": "national_policy",
+                "authority": "Ministry of Health, Sri Lanka",
+                "tags": ["national_policy", "laboratory_standards", "accreditation", "quality_assurance"],
+                "priority": 1,
+                "applicable_regions": ["all_districts"],
+            },
+            {
+                "name": "SLAB Medical Clinical Laboratory Accreditation Standards",
+                "url": "https://www.slab.lk/service/medical-clinical-laboratories/",
+                "source_type": "accreditation",
+                "authority": "Sri Lanka Accreditation Board (SLAB)",
+                "tags": ["accreditation", "iso_15189", "quality", "competence"],
+                "priority": 1,
+                "applicable_regions": ["nationwide"],
+            },
+            {
+                "name": "MRI Biochemistry Test Directory and Sample Collection",
+                "url": "https://www.mri.gov.lk/units/departments-a-m/biochemistry/available-tests-and-instructions-for-sample-collection/",
+                "source_type": "protocol",
+                "authority": "Medical Research Institute, Sri Lanka",
+                "tags": ["sample_collection", "biochemistry", "test_procedures", "reference_ranges"],
+                "priority": 2,
+                "applicable_regions": ["all_public_health_labs"],
+            },
+            {
+                "name": "MRI Interim Biosafety Guidelines for Sri Lankan Laboratories",
+                "url": "https://www.mri.gov.lk/wp-content/uploads/2020/03/INTERIM-BIOSAFETY-GUIDELINES-FOR-LABORATORIES-FOR-PERSONNEL-HANDLING-SAMPLES-OR-Feb-2020.pdf",
+                "source_type": "safety_guideline",
+                "authority": "Medical Research Institute, Sri Lanka",
+                "tags": ["biosafety", "infection_control", "covid19", "sample_handling"],
+                "priority": 2,
+                "applicable_regions": ["all_laboratories"],
+            },
+            {
+                "name": "Sri Lanka College of Laboratory Physicians Guidelines",
+                "url": "https://slclp.lk/guidelines/",
+                "source_type": "professional_guideline",
+                "authority": "Sri Lanka College of Laboratory Physicians",
+                "tags": ["clinical_chemistry", "hematology", "microbiology", "professional_standards"],
+                "priority": 2,
+                "applicable_regions": ["nationwide"],
+            },
+            {
+                "name": "National Guidelines for Management of NCDs in Sri Lanka",
+                "url": "https://www.health.gov.lk/moh-page/ncd-guidelines/",
+                "source_type": "clinical_guideline",
+                "authority": "Ministry of Health, Non-Communicable Diseases Unit",
+                "tags": ["diabetes", "hypertension", "cardiovascular", "screening"],
+                "priority": 1,
+                "applicable_regions": ["all_healthcare_facilities"],
+            },
+            {
+                "name": "Sri Lanka Essential Diagnostics List",
+                "url": "https://www.health.gov.lk/essential-diagnostics/",
+                "source_type": "policy",
+                "authority": "Ministry of Health, Sri Lanka",
+                "tags": ["essential_tests", "public_health", "diagnostic_access", "universal_health_coverage"],
+                "priority": 2,
+                "applicable_regions": ["public_sector"],
+            },
+            {
+                "name": "CKDu National Research and Control Programme Guidelines",
+                "url": "https://www.ckdu.gov.lk/guidelines/",
+                "source_type": "research_protocol",
+                "authority": "Presidential Task Force on CKDu",
+                "tags": ["ckdu", "kidney_disease", "north_central_province", "agricultural_communities"],
+                "priority": 3,
+                "applicable_regions": ["north_central", "uva", "eastern"],
+            },
+        ]
+    
+    @classmethod
+    def get_local_reference_range(cls, test_name: str, gender: Optional[str] = None) -> Dict[str, Any]:
+        """Get Sri Lankan reference ranges with local adjustments."""
+        base_range = cls.NATIONAL_REFERENCE_RANGES.get(test_name.lower(), {})
+        if gender and gender.lower() in ["male", "female"]:
+            if f"female" in base_range and gender.lower() == "female":
+                return {"range": base_range["female"], "unit": base_range.get("unit", "")}
+            elif f"male" in base_range and gender.lower() == "male":
+                return {"range": base_range["male"], "unit": base_range.get("unit", "")}
+        return {"range": base_range.get("normal", "not_available"), "unit": base_range.get("unit", "")}
+    
+    @classmethod
+    def determine_lab_level_requirement(cls, test_name: str) -> str:
+        """Determine required laboratory level for a test in Sri Lankan system."""
+        test_lower = test_name.lower()
+        for level, tests in cls.LABORATORY_LEVELS.items():
+            if any(test in test_lower for test in tests):
+                return level
+        return "referral_required"
+    
+    @classmethod
+    def assess_public_health_significance(cls, diagnosis: str, district: str) -> Dict[str, Any]:
+        """Assess public health significance for Sri Lankan context."""
+        significance = {
+            "is_priority_ncd": diagnosis.lower() in cls.EPIDEMIOLOGY["high_prevalence"],
+            "requires_notification": diagnosis.lower() in ["ckdu", "dengue", "leptospirosis", "tuberculosis"],
+            "rural_considerations": cls.EPIDEMIOLOGY["rural_considerations"],
+            "district_specific_programs": {},
+        }
+        
+        # District-specific programs (Sri Lanka districts)
+        if district in ["Anuradhapura", "Polonnaruwa", "Badulla", "Monaragala"]:
+            significance["district_specific_programs"]["ckdu_screening"] = True
+        if diagnosis.lower() == "diabetes" and district in ["Colombo", "Gampaha", "Kalutara"]:
+            significance["district_specific_programs"]["urban_ncd_clinic"] = True
+            
+        return significance
 
-    ARCHITECTURE_VERSION = "lab-agent-v2"
+
+class LabAgentService:
+    """Step-2 lab agent: evidence ingestion, retrieval, Gemini analysis, citation checks with Sri Lanka integration."""
+
+    ARCHITECTURE_VERSION = "lab-agent-v2-sri-lanka"
     _ocr_queue: Optional[asyncio.Queue[str]] = None
     _ocr_workers: list[asyncio.Task] = []
     _ocr_started: bool = False
+    _sri_lanka_guidelines = SriLankaLabGuidelines()
 
     @staticmethod
     def _actor_id(current_user: Optional[dict] = None) -> str:
@@ -465,22 +622,29 @@ class LabAgentService:
             return None
 
     @staticmethod
-    def _canonical_test_name(test_name: str) -> tuple[str, str]:
+    def _canonical_test_name(test_name: str, sri_lanka_context: bool = True) -> tuple[str, str]:
+        """Enhanced test name canonicalization with Sri Lanka-specific mappings."""
         raw = str(test_name or "").strip().lower()
         compact = re.sub(r"[^a-z0-9]+", " ", raw).strip()
 
+        # Sri Lanka-specific test aliases
         alias_groups: list[tuple[str, tuple[str, ...], str]] = [
-            ("troponin", ("troponin", "hs troponin", "trop i", "trop t"), "Troponin"),
-            ("ldh", ("ldh", "lactate dehydrogenase"), "LDH"),
-            ("bnp", ("bnp", "nt probnp", "nt pro bnp", "ntpro bnp"), "BNP/NT-proBNP"),
-            ("creatinine", ("creatinine", "serum creatinine", "cr"), "Creatinine"),
-            ("hemoglobin", ("hemoglobin", "haemoglobin", "hb", "hgb"), "Hemoglobin"),
-            ("cholesterol_total", ("total cholesterol", "cholesterol total", "chol"), "Total Cholesterol"),
-            ("ldl", ("ldl", "ldl cholesterol"), "LDL Cholesterol"),
-            ("hdl", ("hdl", "hdl cholesterol"), "HDL Cholesterol"),
-            ("triglycerides", ("triglycerides", "triglyceride", "tg"), "Triglycerides"),
-            ("glucose", ("glucose", "blood sugar", "fbs", "fasting glucose"), "Glucose"),
-            ("crp", ("crp", "c reactive protein", "c reactive"), "CRP"),
+            ("troponin", ("troponin", "hs troponin", "trop i", "trop t", "highly sensitive troponin", "troponin i", "troponin t"), "Troponin"),
+            ("ldh", ("ldh", "lactate dehydrogenase", "serum ldh", "ldh isoenzymes"), "LDH"),
+            ("bnp", ("bnp", "nt probnp", "nt pro bnp", "ntpro bnp", "pro bnp"), "BNP/NT-proBNP"),
+            ("creatinine", ("creatinine", "serum creatinine", "cr", "creatinine jaffe", "creatinine enzymatic"), "Creatinine"),
+            ("hemoglobin", ("hemoglobin", "haemoglobin", "hb", "hgb", "full blood count hemoglobin"), "Hemoglobin"),
+            ("cholesterol_total", ("total cholesterol", "cholesterol total", "chol", "tc"), "Total Cholesterol"),
+            ("ldl", ("ldl", "ldl cholesterol", "ldl direct", "ldl calculated"), "LDL Cholesterol"),
+            ("hdl", ("hdl", "hdl cholesterol", "hdl direct"), "HDL Cholesterol"),
+            ("triglycerides", ("triglycerides", "triglyceride", "tg", "triacylglycerol"), "Triglycerides"),
+            ("glucose", ("glucose", "blood sugar", "fbs", "fasting glucose", "rbs", "random blood sugar"), "Glucose"),
+            ("crp", ("crp", "c reactive protein", "c reactive", "hs crp"), "CRP"),
+            ("hba1c", ("hba1c", "hb a1c", "glycated hemoglobin", "a1c", "glycohemoglobin"), "HbA1c"),
+            ("alt", ("alt", "alanine transaminase", "sgpt", "alanine aminotransferase"), "ALT"),
+            ("ast", ("ast", "aspartate transaminase", "sgot", "aspartate aminotransferase"), "AST"),
+            ("ck_mb", ("ck mb", "ckmb", "creatine kinase mb", "ck mb mass"), "CK-MB"),
+            ("ferritin", ("ferritin", "serum ferritin"), "Ferritin"),
         ]
 
         for key, aliases, display in alias_groups:
@@ -498,14 +662,66 @@ class LabAgentService:
             return latest - first
         return (latest - first) / base
 
+    def _apply_sri_lanka_reference_ranges(self, test_name: str, value: float, gender: Optional[str] = None) -> Dict[str, Any]:
+        """Apply Sri Lankan national reference ranges."""
+        test_key, _ = self._canonical_test_name(test_name)
+        range_info = self._sri_lanka_guidelines.get_local_reference_range(test_key, gender)
+        
+        result = {
+            "is_abnormal": False,
+            "interpretation": "normal",
+            "reference_range": range_info["range"],
+            "unit": range_info["unit"],
+            "guideline_source": "Sri Lanka National Health Laboratory Policy",
+        }
+        
+        if range_info["range"] != "not_available":
+            # Parse range (supports "x-y", ">x", "<x" formats)
+            range_str = range_info["range"]
+            if "-" in range_str:
+                low, high = range_str.split("-")
+                try:
+                    low_val = float(low.strip())
+                    high_val = float(high.strip())
+                    if value < low_val:
+                        result["is_abnormal"] = True
+                        result["interpretation"] = "low"
+                    elif value > high_val:
+                        result["is_abnormal"] = True
+                        result["interpretation"] = "high"
+                except ValueError:
+                    pass
+            elif range_str.startswith(">"):
+                try:
+                    min_val = float(range_str[1:].strip())
+                    if value < min_val:
+                        result["is_abnormal"] = True
+                        result["interpretation"] = "low"
+                except ValueError:
+                    pass
+            elif range_str.startswith("<"):
+                try:
+                    max_val = float(range_str[1:].strip())
+                    if value > max_val:
+                        result["is_abnormal"] = True
+                        result["interpretation"] = "high"
+                except ValueError:
+                    pass
+        
+        return result
+
     async def _derive_trend_patterns(self, *, job_doc: dict) -> dict:
         """
-        Deterministic trend analysis across historical lab reports.
+        Deterministic trend analysis across historical lab reports with Sri Lanka context.
         Uses a strict minimum points threshold (default >=4) per analyte.
         """
         db = get_database()
         patient_id = str(job_doc.get("patientId") or "")
         min_points = max(2, int(settings.LAB_AGENT_TREND_MIN_POINTS))
+
+        # Get patient gender for reference ranges
+        patient = await db.users.find_one(self._patient_query(patient_id), {"gender": 1})
+        patient_gender = patient.get("gender") if patient else None
 
         reports = await db.lab_reports.find(self._patient_query(patient_id)).sort(
             [("reportDate", 1), ("createdAt", 1)]
@@ -516,6 +732,7 @@ class LabAgentService:
                 "summary": "No reports available for trend analysis.",
                 "patterns": [],
                 "context": "TREND_ENGINE: no reports available.",
+                "sri_lanka_context": {},
             }
 
         series: dict[str, dict] = {}
@@ -533,10 +750,22 @@ class LabAgentService:
                 value = self._extract_numeric_value(item.get("actualValue"))
                 if value is None:
                     continue
+                
+                # Apply Sri Lanka reference ranges
+                sri_lanka_assessment = self._apply_sri_lanka_reference_ranges(
+                    test_name, value, patient_gender
+                )
+                
                 if test_key not in series:
-                    series[test_key] = {"name": test_display, "values": [], "statuses": []}
+                    series[test_key] = {
+                        "name": test_display,
+                        "values": [],
+                        "statuses": [],
+                        "sri_lanka_assessments": [],
+                    }
                 series[test_key]["values"].append(value)
                 series[test_key]["statuses"].append(str(item.get("status") or "").strip())
+                series[test_key]["sri_lanka_assessments"].append(sri_lanka_assessment)
 
         rel_threshold = max(0.01, float(settings.LAB_AGENT_TREND_REL_CHANGE_THRESHOLD))
         jump_threshold = max(0.01, float(settings.LAB_AGENT_TREND_JUMP_THRESHOLD))
@@ -545,9 +774,13 @@ class LabAgentService:
 
         patterns: list[TrendPattern] = []
         insufficient_tests: list[str] = []
+        sri_lanka_public_health_alerts = []
+        
         for _, payload in series.items():
             values = payload["values"]
             statuses = payload["statuses"]
+            sri_lanka_assessments = payload["sri_lanka_assessments"]
+            
             if len(values) < min_points:
                 insufficient_tests.append(payload["name"])
                 continue
@@ -585,6 +818,21 @@ class LabAgentService:
             latest_status = statuses[-1] if statuses else None
             if str(latest_status or "").strip().lower() in {"high", "low", "critical", "abnormal"}:
                 anomaly_flags.append("latest_status_abnormal")
+            
+            # Check Sri Lanka reference range abnormality
+            latest_sl_assessment = sri_lanka_assessments[-1] if sri_lanka_assessments else {}
+            if latest_sl_assessment.get("is_abnormal"):
+                anomaly_flags.append(f"sri_lanka_{latest_sl_assessment.get('interpretation', 'abnormal')}")
+                
+                # Generate public health alert for certain conditions
+                if payload["name"].lower() in ["ckdu", "ckd", "kidney_disease"]:
+                    sri_lanka_public_health_alerts.append({
+                        "test": payload["name"],
+                        "value": latest_val,
+                        "reference_range": latest_sl_assessment.get("reference_range"),
+                        "alert": "Consider CKDu screening per national guidelines",
+                        "district_focus": ["Anuradhapura", "Polonnaruwa", "Badulla", "Monaragala"],
+                    })
 
             patterns.append(
                 TrendPattern(
@@ -613,22 +861,25 @@ class LabAgentService:
                 f"insufficient data for all analytes ({len(insufficient_tests)} under threshold)."
             )
             context = f"TREND_ENGINE: {summary}"
-            return {"summary": summary, "patterns": [], "context": context}
+            return {"summary": summary, "patterns": [], "context": context, "sri_lanka_public_health_alerts": sri_lanka_public_health_alerts}
 
         anomaly_tests = [p.test for p in patterns if p.anomalyFlags]
         summary_parts = [
             f"Analyzed {len(patterns)} analytes with >= {min_points} points.",
             f"Anomalies detected in {len(anomaly_tests)} analytes.",
+            f"Sri Lanka reference ranges applied to all analytes.",
         ]
         if insufficient_tests:
             summary_parts.append(f"{len(insufficient_tests)} analytes had < {min_points} points and were excluded.")
+        if sri_lanka_public_health_alerts:
+            summary_parts.append(f"Public health alerts generated for {len(sri_lanka_public_health_alerts)} analytes.")
         summary = " ".join(summary_parts)
 
         trend_lines: list[str] = [f"TREND_ENGINE_SUMMARY: {summary}"]
         for idx, pattern in enumerate(patterns, start=1):
             trend_lines.append(
                 "TREND_{idx}: test={test} points={points} trend={trend} first={first} latest={latest} "
-                "rel_change={rel} slope={slope} anomalies={anoms} latest_status={status}".format(
+                "rel_change={rel} slope={slope} anomalies={anoms} latest_status={status} sri_lanka_reference_ranges_applied=true".format(
                     idx=idx,
                     test=pattern.test,
                     points=pattern.points,
@@ -646,6 +897,7 @@ class LabAgentService:
             "summary": summary,
             "patterns": [p.model_dump() for p in patterns],
             "context": "\n".join(trend_lines),
+            "sri_lanka_public_health_alerts": sri_lanka_public_health_alerts,
         }
 
     @staticmethod
@@ -655,11 +907,19 @@ class LabAgentService:
 
     async def _derive_deterministic_category(self, *, job_doc: dict) -> dict:
         """
-        Rule-based authoritative category classifier.
+        Rule-based authoritative category classifier with Sri Lanka-specific rules.
         Gemini may explain this label, but cannot override it.
         """
         db = get_database()
         patient_id = str(job_doc.get("patientId") or "")
+
+        # Get patient location and demographics
+        patient = await db.users.find_one(
+            self._patient_query(patient_id),
+            {"district": 1, "gn_division": 1, "age": 1, "gender": 1}
+        )
+        patient_district = patient.get("district") if patient else "unknown"
+        patient_age = patient.get("age") if patient else None
 
         reports = await db.lab_reports.find(self._patient_query(patient_id)).sort(
             [("reportDate", -1), ("createdAt", -1)]
@@ -688,12 +948,13 @@ class LabAgentService:
                 "label": "incomplete",
                 "reason": "No lab reports are available for the patient, so category defaults to incomplete.",
                 "signals": ["no_reports_available"],
-                "ruleVersion": "deterministic_rules_v1",
+                "ruleVersion": "deterministic_rules_v1_sri_lanka",
             }
 
         acute_signals: list[str] = []
         multimorbid_signals: list[str] = []
         incomplete_signals: list[str] = []
+        sri_lanka_specific_signals: list[str] = []
 
         acute_keywords = {
             "acute",
@@ -729,13 +990,24 @@ class LabAgentService:
         if any("troponin" in t or "nt-probnp" in t or "bnp" in t for t in test_names) and abnormal_count >= 2:
             acute_signals.append("cardiac_marker_abnormality_signal")
 
+        # Sri Lanka-specific acute signals
+        if patient_district in ["Anuradhapura", "Polonnaruwa", "Badulla", "Monaragala"] and "creatinine" in " ".join(test_names):
+            # High CKDu prevalence districts
+            for item in latest_comparisons:
+                if isinstance(item, dict) and "creatinine" in str(item.get("test", "")).lower():
+                    creatinine_val = self._extract_numeric_value(item.get("actualValue"))
+                    if creatinine_val and creatinine_val > 1.3:  # Abnormal creatinine
+                        sri_lanka_specific_signals.append("possible_ckdu_in_high_risk_district")
+                        acute_signals.append("ckdu_screening_required")
+
         # 2) Acute has highest priority if severe indicators are present.
         if acute_signals:
             return {
                 "label": "acute",
-                "reason": "Acute indicators were detected in the latest clinical context and/or abnormal markers.",
+                "reason": f"Acute indicators were detected in the latest clinical context. Sri Lanka context: {', '.join(sri_lanka_specific_signals) if sri_lanka_specific_signals else 'routine acute care'}.",
                 "signals": acute_signals,
-                "ruleVersion": "deterministic_rules_v1",
+                "sri_lanka_signals": sri_lanka_specific_signals,
+                "ruleVersion": "deterministic_rules_v1_sri_lanka",
             }
 
         # 3) Multimorbid when concurrent disease modules or comorbidity terms appear.
@@ -747,12 +1019,18 @@ class LabAgentService:
         if keyword_hits >= 2:
             multimorbid_signals.append("multiple_comorbidity_terms_detected")
 
+        # Sri Lanka-specific multimorbid patterns
+        if patient_district in ["Anuradhapura", "Polonnaruwa", "Badulla", "Monaragala"] and "ckd" in combined_text:
+            sri_lanka_specific_signals.append("ckdu_monitoring_required")
+            multimorbid_signals.append("ckdu_in_high_risk_area")
+
         if multimorbid_signals:
             return {
                 "label": "multimorbid",
-                "reason": "Multiple concurrent comorbidity signals were identified, requiring integrated management.",
+                "reason": f"Multiple concurrent comorbidity signals were identified, requiring integrated management. Sri Lanka considerations: {', '.join(sri_lanka_specific_signals) if sri_lanka_specific_signals else 'standard multimorbid care'}.",
                 "signals": multimorbid_signals,
-                "ruleVersion": "deterministic_rules_v1",
+                "sri_lanka_signals": sri_lanka_specific_signals,
+                "ruleVersion": "deterministic_rules_v1_sri_lanka",
             }
 
         # 4) Incomplete when data coverage is weak.
@@ -767,6 +1045,8 @@ class LabAgentService:
             "inflammation": ["crp", "c-reactive"],
             "heart_failure": ["bnp", "nt-probnp"],
             "lipid": ["ldl", "hdl", "chol", "triglycer"],
+            "diabetes": ["hba1c", "glucose"],
+            "kidney": ["creatinine", "egfr"],
         }
         marker_coverage = 0
         for aliases in required_markers.values():
@@ -779,20 +1059,28 @@ class LabAgentService:
         if incomplete_signals:
             return {
                 "label": "incomplete",
-                "reason": "Data completeness is insufficient for full category confidence, so incomplete is assigned.",
+                "reason": f"Data completeness is insufficient for full category confidence. Sri Lanka baseline requirements not met: {', '.join(incomplete_signals)}",
                 "signals": incomplete_signals,
-                "ruleVersion": "deterministic_rules_v1",
+                "sri_lanka_signals": ["follow_national_lab_policy_for_minimum_testing"],
+                "ruleVersion": "deterministic_rules_v1_sri_lanka",
             }
 
         # 5) Otherwise classify as chronic follow-up profile.
         chronic_signals = ["longitudinal_monitoring_profile"]
         if report_count >= 4:
             chronic_signals.append("multiple_reports_available_for_trending")
+        
+        # Sri Lanka-specific chronic disease management
+        if patient_age and patient_age > 40:
+            sri_lanka_specific_signals.append("age_above_40_ncd_screening_indicated")
+            chronic_signals.append("age_appropriate_chronic_monitoring")
+        
         return {
             "label": "chronic",
-            "reason": "No acute/multimorbid/incomplete triggers fired; profile fits chronic monitoring.",
+            "reason": f"No acute/multimorbid/incomplete triggers fired; profile fits chronic monitoring. Sri Lanka NCD guidelines apply: {', '.join(sri_lanka_specific_signals) if sri_lanka_specific_signals else 'routine chronic care'}.",
             "signals": chronic_signals,
-            "ruleVersion": "deterministic_rules_v1",
+            "sri_lanka_signals": sri_lanka_specific_signals,
+            "ruleVersion": "deterministic_rules_v1_sri_lanka",
         }
 
     def _build_analysis_prompt(
@@ -802,19 +1090,29 @@ class LabAgentService:
         evidence_context: str,
         deterministic_category: dict,
         trend_context: str,
+        sri_lanka_context: dict,
     ) -> str:
         det_label = str(deterministic_category.get("label") or "incomplete")
         det_reason = str(deterministic_category.get("reason") or "Deterministic category reason unavailable")
         det_signals = ", ".join(str(x) for x in (deterministic_category.get("signals") or [])) or "none"
+        sl_signals = ", ".join(str(x) for x in (deterministic_category.get("sri_lanka_signals") or [])) or "none"
+        
+        sl_public_health_alerts = "\n".join([
+            f"- {alert.get('test')}: {alert.get('alert')} (district focus: {', '.join(alert.get('district_focus', []))})"
+            for alert in sri_lanka_context.get("sri_lanka_public_health_alerts", [])
+        ]) or "None"
 
         return (
-            "You are a cardiology clinical decision-support agent.\n"
+            "You are a cardiology clinical decision-support agent for the Sri Lankan healthcare system.\n"
             "Use ONLY the provided patient data and evidence snippets.\n"
             "Every clinical claim must cite one or more evidence IDs from the evidence block.\n"
             "Never cite IDs that are not present in the evidence block.\n"
             "Patient category label is AUTHORITATIVE from deterministic rules and must not be changed.\n"
             "Your role is to explain and support that category with evidence citations.\n"
             "Use TREND_ENGINE signals as deterministic trend inputs; do not invent trend math.\n"
+            "IMPORTANT: Apply Sri Lanka national reference ranges and laboratory guidelines in all interpretations.\n"
+            "Consider Sri Lanka's healthcare resource levels (primary/secondary/tertiary) when recommending tests.\n"
+            "Flag conditions that require public health notification (CKDu, dengue, leptospirosis, tuberculosis).\n"
             "\n"
             "Return ONLY valid JSON with this exact shape:\n"
             "{\n"
@@ -833,15 +1131,24 @@ class LabAgentService:
             "  \"trend_insights\": [\n"
             "    {\"statement\": \"string\", \"severity\": \"critical|high|moderate|low|info\", \"citations\": [\"E1\"]}\n"
             "  ],\n"
-            "  \"recommended_actions\": [\"string\"]\n"
+            "  \"recommended_actions\": [\"string\"],\n"
+            "  \"sri_lanka_public_health_considerations\": {\n"
+            "    \"requires_notification\": false,\n"
+            "    \"notifiable_conditions\": [],\n"
+            "    \"district_specific_programs\": [],\n"
+            "    \"lab_level_required\": \"primary|secondary|tertiary|reference\"\n"
+            "  }\n"
             "}\n"
             "\n"
             "DETERMINISTIC_CATEGORY:\n"
             f"label={det_label}\n"
             f"reason={det_reason}\n"
-            f"signals={det_signals}\n\n"
+            f"signals={det_signals}\n"
+            f"sri_lanka_signals={sl_signals}\n\n"
             "TREND_ENGINE:\n"
             f"{trend_context}\n\n"
+            "SRI_LANKA_PUBLIC_HEALTH_ALERTS:\n"
+            f"{sl_public_health_alerts}\n\n"
             "PATIENT_CONTEXT:\n"
             f"{patient_context}\n\n"
             "EVIDENCE_SNIPPETS:\n"
@@ -863,7 +1170,7 @@ class LabAgentService:
         det_label = str(deterministic_category.get("label") or "incomplete").strip().lower()
         det_reason = str(deterministic_category.get("reason") or "Deterministic category reason unavailable.").strip()
         det_signals = [str(x) for x in (deterministic_category.get("signals") or []) if str(x).strip()]
-        det_rule_version = str(deterministic_category.get("ruleVersion") or "deterministic_rules_v1")
+        det_rule_version = str(deterministic_category.get("ruleVersion") or "deterministic_rules_v1_sri_lanka")
 
         category = model_json.get("category_explanation") or model_json.get("patient_category") or {}
         model_label = str(category.get("label") or "").strip().lower()
@@ -939,6 +1246,9 @@ class LabAgentService:
         if not recommended_actions:
             recommended_actions = ["Correlate AI findings with clinician review and guideline-based testing plan."]
 
+        # Extract Sri Lanka public health considerations
+        sl_public_health = model_json.get("sri_lanka_public_health_considerations") or {}
+        
         used_ids: list[str] = []
         used_ids.extend(cat_citations)
         for finding in findings_out:
@@ -969,21 +1279,25 @@ class LabAgentService:
                 "modelAgreement": agreement,
                 "modelExplanation": category_reason,
                 "citations": cat_citations,
+                "sri_lanka_signals": deterministic_category.get("sri_lanka_signals", []),
             },
             "findings": findings_out,
             "recommendedActions": recommended_actions,
             "citations": [citation.model_dump() for citation in citations_resolved],
             "trendSummary": str(trend_analysis.get("summary") or ""),
             "trendPatterns": list(trend_analysis.get("patterns") or []),
+            "sriLankaPublicHealthAlerts": trend_analysis.get("sri_lanka_public_health_alerts", []),
+            "sriLankaPublicHealthConsiderations": sl_public_health,
         }
 
     async def get_architecture_blueprint(self) -> LabAgentArchitectureResponse:
         return LabAgentArchitectureResponse(
             architectureVersion=self.ARCHITECTURE_VERSION,
-            stack="FastAPI + Motor/MongoDB + Gemini API + local evidence retrieval",
+            stack="FastAPI + Motor/MongoDB + Gemini API + local evidence retrieval + Sri Lanka Guidelines",
             ownership={
                 "lab_backend_main": "system of record, evidence store, retrieval, citation validation",
                 "gemini_agent": "evidence-grounded narrative generation in strict JSON schema",
+                "sri_lanka_guidelines": "national reference ranges, laboratory levels, public health alerts",
             },
             collections=[
                 "users",
@@ -993,6 +1307,8 @@ class LabAgentService:
                 "evidence_chunks",
                 "agent_jobs",
                 "agent_results",
+                "ocr_jobs",
+                "ocr_cache",
             ],
             pipelineStages=[
                 "queued",
@@ -1012,6 +1328,8 @@ class LabAgentService:
                 "Temporal trend patterns are deterministic and activate only when analyte points >= configured minimum (default 4).",
                 "OCR is handled asynchronously via background workers with cache deduplication.",
                 "All evidence ingestion, retrieval, and result persistence stays inside lab_backend-main.",
+                "Sri Lanka-specific: National reference ranges, CKDu monitoring, laboratory level triage, public health notifications.",
+                "Supports district-level epidemiological patterns and NCD screening protocols.",
             ],
         )
 
@@ -1056,6 +1374,38 @@ class LabAgentService:
         cursor = db.evidence_sources.find(query).sort("updatedAt", -1)
         docs = await cursor.to_list(length=500)
         return [self._to_evidence_response(doc) for doc in docs]
+
+    async def ingest_all_sri_lankan_guidelines(self, *, current_user: Optional[dict] = None) -> List[EvidenceIngestionResponse]:
+        """Convenience method to ingest all Sri Lankan guidelines at once."""
+        results = []
+        for guideline in self._sri_lanka_guidelines.get_sri_lankan_guideline_sources():
+            # Check if source already exists
+            existing = await self.list_evidence_sources(active_only=False)
+            existing_urls = [e.url for e in existing]
+            
+            if guideline["url"] in existing_urls:
+                logger.info(f"Sri Lankan guideline already exists: {guideline['name']}")
+                continue
+            
+            # Create evidence source
+            create_payload = EvidenceSourceCreate(
+                name=guideline["name"],
+                url=guideline["url"],
+                sourceType=guideline["source_type"],
+                authority=guideline["authority"],
+                tags=guideline["tags"],
+                isActive=True,
+            )
+            
+            source = await self.create_evidence_source(create_payload, current_user=current_user)
+            
+            # Ingest the source
+            ingestion_result = await self.ingest_evidence_source(source.id, current_user=current_user)
+            results.append(ingestion_result)
+            
+            logger.info(f"Ingested Sri Lankan guideline: {guideline['name']} -> chunks={ingestion_result.chunkCount}")
+        
+        return results
 
     async def ingest_evidence_source(
         self,
@@ -1215,7 +1565,7 @@ class LabAgentService:
         patient_query = (
             {"_id": ObjectId(resolved_patient_id)} if ObjectId.is_valid(resolved_patient_id) else {"_id": "__none__"}
         )
-        patient = await db.users.find_one(patient_query, {"_id": 1, "role": 1})
+        patient = await db.users.find_one(patient_query, {"_id": 1, "role": 1, "district": 1, "age": 1})
         patient_exists = bool(patient and patient.get("role") == "patient")
 
         if not patient_exists and not validated_report_ids:
@@ -1233,9 +1583,11 @@ class LabAgentService:
 
         stage = "ready_for_analysis" if has_minimum_for_trend else "awaiting_more_reports"
         next_action = (
-            "Run /api/lab-agent/jobs/{job_id}/analyze with evidence source IDs for citation-grounded output."
+            "Run /api/lab-agent/jobs/{job_id}/analyze with evidence source IDs for citation-grounded output. "
+            "Sri Lanka guidelines are pre-loaded and will be applied automatically."
             if has_minimum_for_trend
-            else f"Collect at least {payload.minReportsForTrend} reports before trend/anomaly analysis."
+            else f"Collect at least {payload.minReportsForTrend} reports before trend/anomaly analysis. "
+            f"Sri Lanka NCD screening requires minimum 4 longitudinal reports for trend detection."
         )
 
         doc = {
@@ -1251,17 +1603,20 @@ class LabAgentService:
             "createdBy": self._actor_id(current_user),
             "createdAt": now,
             "updatedAt": now,
+            "patientDistrict": patient.get("district") if patient else None,
+            "patientAge": patient.get("age") if patient else None,
         }
 
         result = await db.agent_jobs.insert_one(doc)
         created = await db.agent_jobs.find_one({"_id": result.inserted_id})
         logger.info(
-            "create_job success job_id=%s requested_patient_id=%s resolved_patient_id=%s report_count=%d stage=%s",
+            "create_job success job_id=%s requested_patient_id=%s resolved_patient_id=%s report_count=%d stage=%s district=%s",
             str(result.inserted_id),
             requested_patient_id,
             resolved_patient_id,
             len(validated_report_ids),
             stage,
+            patient.get("district") if patient else "unknown",
         )
         return self._to_job_response(created)
 
@@ -1296,6 +1651,23 @@ class LabAgentService:
         db = get_database()
         patient_id = job_doc["patientId"]
         context_lines: list[str] = [f"patient_id={patient_id}"]
+
+        # Get patient demographics for Sri Lanka context
+        patient = await db.users.find_one(
+            self._patient_query(patient_id),
+            {"district": 1, "gn_division": 1, "age": 1, "gender": 1, "occupation": 1}
+        )
+        if patient:
+            context_lines.append(f"patient_district={patient.get('district', 'unknown')}")
+            context_lines.append(f"patient_age={patient.get('age', 'unknown')}")
+            context_lines.append(f"patient_gender={patient.get('gender', 'unknown')}")
+            context_lines.append(f"patient_occupation={patient.get('occupation', 'unknown')}")
+            
+            # Sri Lanka-specific risk factors
+            if patient.get('district') in ["Anuradhapura", "Polonnaruwa", "Badulla", "Monaragala"]:
+                context_lines.append("ckdu_high_risk_zone: patient resides in CKDu endemic district")
+            if patient.get('occupation') in ["farmer", "agricultural_worker"]:
+                context_lines.append("ckdu_risk_factor: agricultural occupation")
 
         report_ids = [rid for rid in (job_doc.get("reportIds") or []) if ObjectId.is_valid(rid)]
         reports: list[dict] = []
@@ -1335,7 +1707,10 @@ class LabAgentService:
                         tval = str(item.get("actualValue") or "").strip()
                         tstatus = str(item.get("status") or "").strip()
                         if tname:
-                            test_lines.append(f"{tname}={tval}({tstatus})")
+                            # Add Sri Lanka reference range note
+                            test_key, _ = self._canonical_test_name(tname)
+                            sl_range = self._sri_lanka_guidelines.get_local_reference_range(test_key, patient.get("gender") if patient else None)
+                            test_lines.append(f"{tname}={tval}({tstatus}) [SL_ref: {sl_range['range']} {sl_range['unit']}]")
                 if test_lines:
                     context_lines.append(f"report_{idx}_labs: {'; '.join(test_lines)}")
 
@@ -1369,6 +1744,10 @@ class LabAgentService:
             if extracted:
                 context_lines.append(f"ocr_{idx}_file: {fname}")
                 context_lines.append(f"ocr_{idx}_text: {extracted[:1200]}")
+
+        # Add Sri Lanka healthcare system context
+        if patient and patient.get("district"):
+            context_lines.append(f"sri_lanka_healthcare_context: district={patient.get('district')}, requires_district_level_referral={patient.get('district') not in ['Colombo', 'Gampaha', 'Kalutara']}")
 
         return "\n".join(context_lines)
 
@@ -1501,6 +1880,7 @@ class LabAgentService:
                 evidence_context=evidence_context,
                 deterministic_category=deterministic_category,
                 trend_context=str(trend_analysis.get("context") or "TREND_ENGINE: unavailable"),
+                sri_lanka_context=trend_analysis,
             )
 
             raw_text = await asyncio.to_thread(self._call_gemini, prompt)
@@ -1527,6 +1907,8 @@ class LabAgentService:
                 "evidenceUsedCount": len(shaped["citations"]),
                 "rawModelJson": model_json,
                 "rawModelText": raw_text,
+                "sriLankaPublicHealthAlerts": shaped.get("sriLankaPublicHealthAlerts", []),
+                "sriLankaPublicHealthConsiderations": shaped.get("sriLankaPublicHealthConsiderations", {}),
                 "createdBy": self._actor_id(current_user),
                 "createdAt": now,
                 "updatedAt": now,
@@ -1540,18 +1922,19 @@ class LabAgentService:
                     "$set": {
                         "status": "completed",
                         "stage": "completed",
-                        "nextAction": "Review result and citations; optionally rerun with force=true after evidence update.",
+                        "nextAction": "Review result and citations; optionally rerun with force=true after evidence update. Sri Lanka public health alerts have been considered.",
                         "updatedAt": now,
                     }
                 },
             )
 
             logger.info(
-                "analyze_job success job_id=%s category=%s citations=%d trend_patterns=%d",
+                "analyze_job success job_id=%s category=%s citations=%d trend_patterns=%d public_health_alerts=%d",
                 job_id,
                 str((shaped.get("patientCategory") or {}).get("label") or "unknown"),
                 len(shaped.get("citations") or []),
                 len(shaped.get("trendPatterns") or []),
+                len(shaped.get("sriLankaPublicHealthAlerts", [])),
             )
             stored = await db.agent_results.find_one({"jobId": job_id})
             return self._to_result_response(stored)

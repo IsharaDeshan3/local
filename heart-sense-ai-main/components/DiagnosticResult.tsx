@@ -92,7 +92,7 @@ function RareCaseAlertCard({ alert }: { alert: RareCaseAlert }) {
           {(alert.similarity_score * 100).toFixed(0)}% match
         </Badge>
       </div>
-      <p className="text-lg font-bold text-white">{alert.condition}</p>
+      <p className="text-lg font-bold text-foreground">{alert.condition}</p>
 
       {alert.diseases.length > 0 && (
         <div>
@@ -178,7 +178,7 @@ function PipelineTimeline({ steps }: { steps: PipelineStep[] }) {
                 ? "border-emerald-500/10 bg-emerald-500/[0.02]"
                 : isFail
                   ? "border-rose-500/10 bg-rose-500/[0.02]"
-                  : "border-white/5 bg-white/[0.01]"
+                  : "border-border bg-muted/20"
             }`}
           >
             <div
@@ -187,7 +187,7 @@ function PipelineTimeline({ steps }: { steps: PipelineStep[] }) {
                   ? "bg-emerald-500/10 text-emerald-400"
                   : isFail
                     ? "bg-rose-500/10 text-rose-400"
-                    : "bg-white/5 text-muted-foreground"
+                    : "bg-muted text-muted-foreground"
               }`}
             >
               {isOk ? (
@@ -214,7 +214,7 @@ function PipelineTimeline({ steps }: { steps: PipelineStep[] }) {
                   ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
                   : isFail
                     ? "bg-rose-500/10 text-rose-400 border-rose-500/20"
-                    : "bg-white/5 text-muted-foreground border-white/10"
+                    : "bg-muted text-muted-foreground border-border"
               }`}
             >
               {step.status}
@@ -227,12 +227,97 @@ function PipelineTimeline({ steps }: { steps: PipelineStep[] }) {
 }
 
 function MarkdownContent({ content }: { content: string }) {
-  const blocks = parseContentBlocks(content);
+  const cleanedContent = sanitizeReportText(content);
+  const blocks = parseContentBlocks(cleanedContent);
+  const sections = groupBlocks(blocks);
   return (
     <div className="space-y-5">
-      {blocks.map((block, i) => renderBlock(block, i))}
+      {sections.map((section, i) => {
+        if (!section.titleBlock) {
+          return (
+            <div key={`plain-${i}`} className="space-y-5">
+              {section.blocks.map((block, bi) =>
+                renderBlock(block, i * 1000 + bi),
+              )}
+            </div>
+          );
+        }
+
+        const titleText = getSectionTitle(section.titleBlock).toLowerCase();
+        const collapseByDefault =
+          titleText.includes("diagnostic gaps") ||
+          titleText.includes("references");
+
+        if (!collapseByDefault) {
+          return (
+            <div key={`section-${i}`} className="space-y-4">
+              {renderBlock(section.titleBlock, i * 1000)}
+              {section.blocks.map((block, bi) =>
+                renderBlock(block, i * 1000 + bi + 1),
+              )}
+            </div>
+          );
+        }
+
+        return (
+          <details
+            key={`collapse-${i}`}
+            className="rounded-xl border border-border bg-muted/20 px-4 py-3"
+          >
+            <summary className="cursor-pointer list-none text-sm font-bold text-foreground flex items-center gap-2">
+              <ChevronRight className="h-4 w-4 text-muted-foreground" />
+              {getSectionTitle(section.titleBlock)}
+            </summary>
+            <div className="mt-4 space-y-4 pl-1">
+              {section.blocks.map((block, bi) =>
+                renderBlock(block, i * 1000 + bi + 1),
+              )}
+            </div>
+          </details>
+        );
+      })}
     </div>
   );
+}
+
+type BlockSection = {
+  titleBlock?: Block;
+  blocks: Block[];
+};
+
+function getSectionTitle(block: Block): string {
+  if (block.type === "EMOJI_SECTION") return block.title;
+  if (block.type === "HEADING") return block.text;
+  return "Section";
+}
+
+function isSectionStarter(block: Block): boolean {
+  return (
+    block.type === "EMOJI_SECTION" ||
+    (block.type === "HEADING" && block.level <= 3)
+  );
+}
+
+function groupBlocks(blocks: Block[]): BlockSection[] {
+  const sections: BlockSection[] = [];
+  let current: BlockSection = { blocks: [] };
+
+  for (const block of blocks) {
+    if (isSectionStarter(block)) {
+      if (current.titleBlock || current.blocks.length > 0) {
+        sections.push(current);
+      }
+      current = { titleBlock: block, blocks: [] };
+      continue;
+    }
+    current.blocks.push(block);
+  }
+
+  if (current.titleBlock || current.blocks.length > 0) {
+    sections.push(current);
+  }
+
+  return sections;
 }
 
 // ─── Block parser ────────────────────────────────────────────────────────────
@@ -381,7 +466,7 @@ function SeverityBadge({ value }: { value: string }) {
         ? "bg-amber-500/15 text-amber-400 border-amber-500/30"
         : v === "LOW" || v === "MILD" || v === "NORMAL"
           ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
-          : "bg-white/5 text-muted-foreground border-white/10";
+          : "bg-muted text-muted-foreground border-border";
   return (
     <span
       className={`inline-flex items-center px-2 py-0.5 rounded-lg border text-[10px] font-black uppercase tracking-wider ${cls}`}
@@ -393,7 +478,7 @@ function SeverityBadge({ value }: { value: string }) {
 
 function ConfidenceBadge({ value }: { value: string }) {
   const num = parseFloat(value);
-  let cls = "bg-white/5 text-muted-foreground border-white/10";
+  let cls = "bg-muted text-muted-foreground border-border";
   let display = value;
   if (!isNaN(num)) {
     const pct = num <= 1 ? num : num / 100;
@@ -466,16 +551,53 @@ function sectionIcon(title: string) {
 function sectionColor(title: string): string {
   const t = title.toLowerCase();
   if (t.includes("differential"))
-    return "border-primary/20 bg-primary/5 text-primary";
+    return "border-primary/30 bg-primary/10 text-primary";
   if (t.includes("workup") || t.includes("investigation"))
-    return "border-blue-500/20 bg-blue-500/5 text-blue-400";
+    return "border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300";
   if (t.includes("gap") || t.includes("limit"))
-    return "border-amber-500/20 bg-amber-500/5 text-amber-400";
+    return "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300";
   if (t.includes("reference"))
-    return "border-slate-500/20 bg-slate-500/5 text-slate-300";
+    return "border-slate-500/30 bg-slate-500/10 text-slate-700 dark:text-slate-300";
   if (t.includes("disclaimer"))
-    return "border-amber-500/20 bg-amber-500/5 text-amber-400";
-  return "border-white/10 bg-white/[0.02] text-muted-foreground";
+    return "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300";
+  return "border-border bg-muted/20 text-muted-foreground";
+}
+
+function normalizeHeader(header: string): string {
+  return header.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function detectOraMode(content: string): "newbie" | "seasoned" | "unknown" {
+  const text = (content || "").toLowerCase();
+  if (text.includes("diagnostic summary")) return "newbie";
+  if (text.includes("clinical assessment brief")) return "seasoned";
+  return "unknown";
+}
+
+function extractOverview(content: string): string {
+  const match = content.match(/\*\*Overview:\*\*\s*(.+)/i);
+  return match?.[1]?.trim() || "Clinical report generated from current multimodal evidence.";
+}
+
+function extractTopDiagnosis(content: string): string {
+  const match = content.match(/\|\s*(?:\d+\s*\|\s*)?\*\*([^*|]+)\*\*/);
+  return (
+    sanitizeLegacyDictText(match?.[1]?.trim() || "") ||
+    "Top diagnosis not explicitly provided"
+  );
+}
+
+function extractPrimaryAction(content: string): string {
+  const match = content.match(/\d+\.\s+\*\*([^*]+)\*\*/);
+  return (
+    sanitizeLegacyDictText(match?.[1]?.trim() || "") ||
+    "Prioritize immediate workup and clinical correlation."
+  );
+}
+
+function extractReferenceCount(content: string): number {
+  const refs = content.match(/\[R\d+\]/g) || [];
+  return refs.length;
 }
 
 // ─── Block renderer ───────────────────────────────────────────────────────────
@@ -506,7 +628,7 @@ function renderBlock(block: Block, key: number): React.ReactNode {
       return (
         <p
           key={key}
-          className={`${sizes[block.level] ?? "text-sm"} font-black text-white mt-4 mb-1`}
+          className={`${sizes[block.level] ?? "text-sm"} font-black text-foreground mt-4 mb-1`}
         >
           {block.text}
         </p>
@@ -517,14 +639,88 @@ function renderBlock(block: Block, key: number): React.ReactNode {
       if (block.rows.length < 2) return null;
       const headers = block.rows[0];
       const dataRows = block.rows.slice(1);
+
+      const normalizedHeaders = headers.map(normalizeHeader);
+      const hasDiagnosisColumn =
+        normalizedHeaders.includes("condition") ||
+        normalizedHeaders.includes("differential");
+      const hasSeverity = normalizedHeaders.includes("severity");
+      const hasPriority = normalizedHeaders.includes("priority");
+      const hasInvestigation = normalizedHeaders.includes("investigation");
+
+      if (hasDiagnosisColumn && hasSeverity) {
+        return (
+          <div key={key} className="grid gap-3 md:grid-cols-2">
+            {dataRows.map((row, ri) => {
+              const cells = headers.reduce<Record<string, string>>((acc, header, idx) => {
+                acc[normalizeHeader(header)] = row[idx] || "";
+                return acc;
+              }, {});
+
+              const label = cells.condition || cells.differential || "Diagnosis";
+              const clue = cells["key clue"] || cells["decisive finding"] || "No decisive clue provided";
+
+              return (
+                <div
+                  key={ri}
+                  className="rounded-xl border border-border bg-card p-4 space-y-3"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <p className="text-sm font-semibold text-foreground leading-snug">
+                      {formatBold(label)}
+                    </p>
+                    <div className="flex items-center gap-2">
+                      {cells.confidence ? <ConfidenceBadge value={cells.confidence} /> : null}
+                      {cells.severity ? <SeverityBadge value={cells.severity} /> : null}
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    {formatBold(clue)}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+        );
+      }
+
+      if (hasPriority && hasInvestigation) {
+        return (
+          <div key={key} className="grid gap-3 md:grid-cols-2">
+            {dataRows.map((row, ri) => {
+              const cells = headers.reduce<Record<string, string>>((acc, header, idx) => {
+                acc[normalizeHeader(header)] = row[idx] || "";
+                return acc;
+              }, {});
+              return (
+                <div
+                  key={ri}
+                  className="rounded-xl border border-border bg-card p-4 space-y-2"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-sm font-semibold text-foreground">
+                      {formatBold(cells.investigation || "Investigation")}
+                    </p>
+                    {cells.priority ? <PriorityBadge value={cells.priority} /> : null}
+                  </div>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    {formatBold(cells["diagnostic target"] || "Diagnostic target not specified")}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+        );
+      }
+
       return (
         <div
           key={key}
-          className="overflow-x-auto rounded-2xl border border-white/5 mt-2"
+          className="overflow-x-auto rounded-2xl border border-border mt-2 bg-card"
         >
           <table className="w-full text-left">
             <thead>
-              <tr className="border-b border-white/10 bg-white/[0.03]">
+              <tr className="border-b border-border bg-muted/30">
                 {headers.map((h, ci) => (
                   <th
                     key={ci}
@@ -539,7 +735,7 @@ function renderBlock(block: Block, key: number): React.ReactNode {
               {dataRows.map((row, ri) => (
                 <tr
                   key={ri}
-                  className="border-b border-white/5 last:border-0 hover:bg-white/[0.015] transition-colors"
+                  className="border-b border-border/70 last:border-0 hover:bg-muted/20 transition-colors"
                 >
                   {row.map((cell, ci) => (
                     <td key={ci} className="px-4 py-3 align-top">
@@ -612,16 +808,67 @@ function renderBlock(block: Block, key: number): React.ReactNode {
 }
 
 function formatBold(text: string): React.ReactNode {
-  const parts = text.split(/(\*\*[^*]+\*\*)/g);
+  const cleaned = sanitizeLegacyDictText(text);
+  const parts = cleaned.split(/(\*\*[^*]+\*\*)/g);
   return parts.map((part, i) =>
     part.startsWith("**") && part.endsWith("**") ? (
-      <strong key={i} className="text-white font-bold">
+      <strong key={i} className="text-foreground font-bold">
         {part.slice(2, -2)}
       </strong>
     ) : (
       <span key={i}>{part}</span>
     ),
   );
+}
+
+function sanitizeLegacyDictText(text: string): string {
+  if (!text) return "";
+  let cleaned = text;
+
+  cleaned = cleaned.replace(
+    /\{[^{}]*'differential'\s*:\s*'([^']+)'[^{}]*\}/gi,
+    "$1",
+  );
+  cleaned = cleaned.replace(
+    /\{[^{}]*'condition'\s*:\s*'([^']+)'[^{}]*\}/gi,
+    "$1",
+  );
+  cleaned = cleaned.replace(
+    /\{[^{}]*'test(?:_name)?'\s*:\s*'([^']+)'[^{}]*\}/gi,
+    "$1",
+  );
+
+  cleaned = cleaned.replace(
+    /\*\*\s*\{?\s*'rank'\s*:?\s*\d+\s*,\s*'differential'\s*:\s*'([^']+)'[^*|]*\*\*/gi,
+    "**$1**",
+  );
+  cleaned = cleaned.replace(/'rank'\s*:?\s*\d+\s*,?\s*/gi, "");
+
+  return cleaned.replace(/\s{2,}/g, " ").trim();
+}
+
+function sanitizeReportText(text: string): string {
+  let cleaned = sanitizeLegacyDictText(text);
+  if (!cleaned) return cleaned;
+
+  cleaned = cleaned.replace(
+    /\*No supporting references were available in the prompt context\.\*/gi,
+    "",
+  );
+  cleaned = cleaned.replace(
+    /No supporting references were available in the prompt context\.?/gi,
+    "",
+  );
+
+  const hasActualReferences = /\[R\d+\]/.test(cleaned);
+  if (!hasActualReferences) {
+    cleaned = cleaned.replace(
+      /(?:\n|^)#{2,3}\s*📚\s*REFERENCES\s*(?:\n[-*]{3,}\n)?[\s\S]*$/i,
+      "",
+    );
+  }
+
+  return cleaned.replace(/\n{3,}/g, "\n\n").trim();
 }
 
 // ─── Main Component ─────────────────────────────────────────────────────────
@@ -631,6 +878,19 @@ interface DiagnosticResultProps {
 }
 
 export default function DiagnosticResult({ response }: DiagnosticResultProps) {
+  const report = response.refined_output || "";
+  const oraMode = detectOraMode(report);
+  const overview = extractOverview(report);
+  const topDiagnosis = extractTopDiagnosis(report);
+  const primaryAction = extractPrimaryAction(report);
+  const referenceCount = extractReferenceCount(report);
+  const modeToneClass =
+    oraMode === "newbie"
+      ? "border-blue-500/30 bg-blue-500/10"
+      : oraMode === "seasoned"
+        ? "border-slate-500/30 bg-slate-500/10"
+        : "border-border bg-card";
+
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <StatusBanner
@@ -649,7 +909,7 @@ export default function DiagnosticResult({ response }: DiagnosticResultProps) {
       )}
 
       <Tabs defaultValue="primary" className="w-full">
-        <TabsList className="h-12 bg-white/5 border border-white/5 rounded-xl p-1.5 gap-1.5">
+        <TabsList className="h-12 bg-muted/30 border border-border rounded-xl p-1.5 gap-1.5">
           <TabsTrigger
             value="primary"
             className="flex items-center gap-2 rounded-lg text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
@@ -672,22 +932,103 @@ export default function DiagnosticResult({ response }: DiagnosticResultProps) {
 
         {/* ORA Clinical Report */}
         <TabsContent value="primary" className="mt-6">
-          <Card className="border-white/5 bg-white/[0.02] rounded-2xl">
-            <CardContent className="p-8 space-y-6">
-              {response.refined_output ? (
-                <MarkdownContent content={response.refined_output} />
-              ) : (
-                <p className="text-sm text-muted-foreground italic">
-                  No clinical report was generated.
-                </p>
-              )}
-            </CardContent>
-          </Card>
+          <div className="space-y-5">
+            <Card className={`rounded-2xl ${modeToneClass}`}>
+              <CardContent className="p-6 md:p-7">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div className="space-y-2 max-w-3xl">
+                    <p className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
+                      AI Diagnosis Summary
+                    </p>
+                    <h3 className="text-xl md:text-2xl font-semibold text-foreground leading-tight">
+                      {topDiagnosis}
+                    </h3>
+                    <p className="text-sm text-muted-foreground leading-relaxed">
+                      {overview}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Badge className="bg-primary/10 text-primary border-primary/30">
+                      {oraMode === "newbie"
+                        ? "Newbie Mode"
+                        : oraMode === "seasoned"
+                          ? "Seasoned Mode"
+                          : "Clinical Mode"}
+                    </Badge>
+                    {referenceCount > 0 ? (
+                      <Badge variant="outline" className="border-border text-foreground">
+                        References: {referenceCount}
+                      </Badge>
+                    ) : null}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <div className="grid gap-5 xl:grid-cols-12">
+              <Card className="rounded-2xl border-border bg-card xl:col-span-8">
+                <CardContent className="p-6 md:p-8 space-y-6">
+                  {response.refined_output ? (
+                    <MarkdownContent content={response.refined_output} />
+                  ) : (
+                    <p className="text-sm text-muted-foreground italic">
+                      No clinical report was generated.
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
+
+              <div className="xl:col-span-4 space-y-4">
+                <Card className="rounded-2xl border-border bg-card">
+                  <CardContent className="p-5 space-y-2">
+                    <p className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
+                      Immediate Priority
+                    </p>
+                    <p className="text-sm font-semibold text-foreground leading-snug">
+                      {primaryAction}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Focus on first actionable investigation to reduce uncertainty quickly.
+                    </p>
+                  </CardContent>
+                </Card>
+
+                <Card className="rounded-2xl border-border bg-card">
+                  <CardContent className="p-5 space-y-2">
+                    <p className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
+                      Reading Style
+                    </p>
+                    <p className="text-sm text-foreground">
+                      {oraMode === "newbie"
+                        ? "Human-friendly teaching narrative"
+                        : "Strict medical brief for advanced readers"}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Toggle mode in ORA Output Mode for alternate presentation.
+                    </p>
+                  </CardContent>
+                </Card>
+
+                {response.disclaimer ? (
+                  <Card className="rounded-2xl border-amber-500/30 bg-amber-500/10">
+                    <CardContent className="p-4">
+                      <p className="text-[11px] font-bold uppercase tracking-widest text-amber-800 dark:text-amber-300 mb-2">
+                        Disclaimer
+                      </p>
+                      <p className="text-xs text-amber-900/80 dark:text-amber-200/90 leading-relaxed">
+                        {response.disclaimer}
+                      </p>
+                    </CardContent>
+                  </Card>
+                ) : null}
+              </div>
+            </div>
+          </div>
         </TabsContent>
 
         {/* KRA Raw Analysis */}
         <TabsContent value="kra" className="mt-6">
-          <Card className="border-white/5 bg-white/[0.02] rounded-2xl">
+          <Card className="border-border bg-card rounded-2xl">
             <CardContent className="p-8">
               {response.kra_raw ? (
                 <MarkdownContent content={response.kra_raw} />
@@ -702,13 +1043,13 @@ export default function DiagnosticResult({ response }: DiagnosticResultProps) {
 
         {/* Pipeline Steps */}
         <TabsContent value="pipeline" className="mt-6">
-          <Card className="border-white/5 bg-white/[0.02] rounded-2xl">
+          <Card className="border-border bg-card rounded-2xl">
             <CardContent className="p-6">
               <div className="flex items-center justify-between mb-6">
                 <h3 className="text-xs font-black uppercase tracking-widest text-muted-foreground">
                   Pipeline Execution
                 </h3>
-                <Badge className="bg-white/5 text-muted-foreground border-white/10 text-[9px]">
+                <Badge className="bg-muted text-muted-foreground border-border text-[9px]">
                   Session: {response.session_id.slice(0, 8)}…
                 </Badge>
               </div>

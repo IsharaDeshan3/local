@@ -124,7 +124,7 @@ async def delete_active_patient_sessions(patient_id: str) -> dict[str, Any]:
 async def save_extraction(session_id: str, payload: ExtractionSaveRequest) -> StepSaveResponse:
     # Step 1 persists the extracted symptom payload before ECG/lab/analysis.
     try:
-        result = _store.save_step(
+        result = _store.save_step (
             session_id=session_id,
             step_name="extraction",
             payload=payload.model_dump(),
@@ -193,10 +193,12 @@ async def run_analysis(session_id: str, payload: AnalysisRunRequest) -> dict[str
         _workflow.event_bus.emit(session_id, {"step": "analysis_done", "status": "error", "message": str(exc)})
         logger.error("Analysis pipeline value error:\n%s", traceback.format_exc())
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Analysis failed: {exc}")
+
     except RuntimeError as exc:
         status_name = "cancelled" if "ANALYSIS_CANCELLED" in str(exc) else "error"
         _workflow.event_bus.emit(session_id, {"step": "analysis_done", "status": status_name, "message": str(exc)})
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+        
     except Exception as exc:
         _workflow.event_bus.emit(session_id, {"step": "analysis_done", "status": "error", "message": str(exc)})
         logger.error("Analysis pipeline failed:\n%s", traceback.format_exc())

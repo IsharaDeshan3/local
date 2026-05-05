@@ -97,34 +97,58 @@ class UnifiedVectorBuilder:
         chief_complaint: Optional[str] = None,
     ) -> UnifiedPatientVector:
 
+        # WorkflowService passes normalized symptom text plus the flattened ECG
+        # and lab findings into this builder through SearchService. The builder
+        # does not talk to FAISS directly; it only prepares the two query
+        # strings that the search layer will send to the textbook and rare-case
+        # retrievers.
+
         ecg_findings = ecg_findings or []
         lab_findings = lab_findings or []
         lab_values = lab_values or {}
 
-        # --- 1. Build individual sections ---
+        # 1. Build individual sections.
+        # Each section keeps the same information in a text form that is easy
+        # for embedding models to consume, while still preserving the original
+        # clinical meaning of the request payload.
+
         symptom_section = self._build_symptom_section(
             symptoms_text, age, sex, chief_complaint)
         ecg_section = self._build_ecg_section(ecg_findings)
         lab_section = self._build_lab_section(lab_findings, lab_values)
 
-        # --- 2. Detect anomalies ---
+        # 2. Detect anomalies.
+        # These are the terms that look unusual compared with common cardiac
+        # patterns. SearchService uses them to decide whether rare-case search
+        # should be turned on after the textbook result comes back.
+
         anomalies = self._detect_anomalies(
             symptoms_text, ecg_findings, lab_findings, lab_values)
 
-        # --- 3. Data completeness ---
+        # 3. Data completeness.
+        # The quality map produced here is returned all the way back to
+        # WorkflowService so the pipeline can report whether the case was
+        # strongly supported or mostly incomplete.
+
         completeness = {
             "symptoms": bool(symptoms_text.strip()),
             "ecg": bool(ecg_findings),
             "labs": bool(lab_findings or lab_values),
         }
 
-        # --- 4. Build main query (flat concat) ---
+        # 4. Build main query (flat concat).
+        # This is the query SearchService sends to the textbook FAISS index.
         main_parts = [s for s in [symptom_section, ecg_section, lab_section] if s]
         main_query = "\n".join(main_parts)
 
-        # --- 5. Build rare query (anomaly-emphasised) ---
+        # 5. Build rare query (anomaly-emphasised).
+        # The rare-case search path uses this text instead of the plain main
+        # query because repeating anomaly terms pushes them higher in the
+        # embedding centroid.
+        
         rare_query = self._build_rare_query(
             main_query, anomalies, ecg_findings, lab_findings)
+
 
         return UnifiedPatientVector(
             main_query=main_query,
@@ -146,7 +170,9 @@ class UnifiedVectorBuilder:
         """
         Build directly from a backend AnalyzeRequest object.
 
-        Avoids the caller having to unpack payloads manually.
+        This is the transport-layer adapter used by callers that already have a
+        validated request object. It keeps the vector builder independent from
+        the HTTP route and the workflow orchestration code.
         """
         symptoms_text = req.symptoms.text if req.symptoms else ""
         age = getattr(req.symptoms, "age", None) if req.symptoms else None
@@ -196,6 +222,8 @@ class UnifiedVectorBuilder:
         sex: Optional[str],
         chief: Optional[str],
     ) -> str:
+        # Keep the symptom section human-readable, because SearchService feeds
+        # it into FAISS as plain text rather than a structured JSON object.
         parts = []
         if age:
             parts.append(f"{age}-year-old")
@@ -210,12 +238,17 @@ class UnifiedVectorBuilder:
     def _build_ecg_section(findings: List[str]) -> str:
         if not findings:
             return ""
+        # ECG findings are flattened into a single sentence so the embedding
+        # model sees the clinically relevant phrases together.
         return "ECG findings: " + ", ".join(findings)
 
     @staticmethod
     def _build_lab_section(findings: List[str], values: Dict[str, float]) -> str:
         if not findings and not values:
             return ""
+        # Lab values are appended in a compact narrative form because the rare
+        # search path needs to preserve discordant markers like troponin, BNP,
+        # and eosinophilia-like hints.
         parts = ["Laboratory results:"]
         parts.extend(findings)
         return " ".join(parts)
@@ -233,6 +266,9 @@ class UnifiedVectorBuilder:
         Identify findings that do NOT fit common cardiac conditions.
         These are the "rare indicators" that get extra weight.
         """
+        # SearchService reads this list after the textbook pass and uses it as a
+        # signal that the case may deserve a second pass through the rare-case
+        # FAISS index.
         anomalies: List[str] = []
         symptoms_lower = symptoms.lower()
 
@@ -311,6 +347,9 @@ class UnifiedVectorBuilder:
             # No anomalies detected — use the main query as-is
             return main_query
 
+        # The repeated anomaly block is the main mechanism that biases the rare
+        # retrieval toward cases where the textbook-style explanation does not
+        # fit the observed pattern.
         emphasis_parts = [main_query]
 
         # Repeat anomalies to bias the embedding

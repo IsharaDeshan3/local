@@ -1,16 +1,3 @@
-"""
-backend/processing/search_service.py
-
-Unified search service: textbook FAISS index + rare-case FAISS index.
-
-Replaces the old single-index approach with:
-  1. Unified Patient Vector builder (anomaly-weighted queries)
-  2. Textbook search  (all-MiniLM-L6-v2 / 384d)
-  3. Rare-case search (PubMedBERT / 768d via rare_cardio.faiss)
-  4. Negative filter   (contradiction detection)
-  5. Rare-case flag    (threshold + alert generation)
-"""
-
 from __future__ import annotations
 
 import logging
@@ -19,19 +6,21 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 # Allow importing root-level modules
+    # SearchService keeps the textbook retriever as a process-wide singleton so
+    # WorkflowService can call the search path repeatedly without reloading the
+    # FAISS index on every request.
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from faiss_retriever import FAISSRetriever                   # noqa: E402
-from core.rare_case_retriever import RareCaseRetriever       # noqa: E402
-from core.unified_vector import UnifiedVectorBuilder         # noqa: E402
-from core.negative_filter import NegativeFilter              # noqa: E402
-from core.rare_case_flag import RareCaseFlag, RareCaseAlert  # noqa: E402
+from faiss_retriever import FAISSRetriever                   
+from core.rare_case_retriever import RareCaseRetriever       
+from core.unified_vector import UnifiedVectorBuilder         
+from core.negative_filter import NegativeFilter             
+from core.rare_case_flag import RareCaseFlag, RareCaseAlert  
 
 logger = logging.getLogger(__name__)
 
-# -------------------------------------------------------------------------- #
-#  Singletons — loaded once per process                                       #
-# -------------------------------------------------------------------------- #
+    # Rare-case search is also lazy-loaded because it is only needed after the
+    # textbook phase says the case is uncertain enough to justify the extra cost.
 
 _textbook_retriever: FAISSRetriever | None = None
 _rare_retriever: RareCaseRetriever | None = None
@@ -61,11 +50,8 @@ def _get_rare_retriever() -> RareCaseRetriever:
             raise
     return _rare_retriever
 
-# -------------------------------------------------------------------------- #
-#  Search service                                                             #
-# -------------------------------------------------------------------------- #
-
 class SearchService:
+
     """
     Dual-index search with unified patient vector, negative filtering,
     and rare-case threshold alerting.
@@ -165,13 +151,15 @@ class SearchService:
         lab_findings: Optional[List[str]] = None,
         lab_values: Optional[Dict[str, float]] = None,
     ) -> Dict[str, Any]:
-        """
-        Decide whether rare-case retrieval should run.
 
-        The gate is intentionally conservative: rare-case search is enabled when
-        textbook retrieval confidence is weak, anomalies are prominent, or the
-        case has multimodal findings that are not well-covered by textbook hits.
         """
+        Here this part Decides whether rare-case retrieval should run or not.
+
+        The gate is intentionally conservative: Conditions to enable rare-case search are when
+        textbook retrieval confidence is weak, anomalies are prominent, or the
+        case has multimodal findings that are not well-covered by textbook Findings.
+        """
+
         top_score = float(quality.get("top_score", 0.0) or 0.0)
         avg_score = float(quality.get("avg_score", 0.0) or 0.0)
         status = str(quality.get("status") or "LOW_CONFIDENCE")
@@ -273,7 +261,7 @@ class SearchService:
         # retrieval in one call instead of orchestrating the gate themselves.
         """
         Dual-index search with anomaly detection and rare-case flagging.
-
+        
         Returns
         -------
         context_str : str

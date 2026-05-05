@@ -83,6 +83,11 @@ class RareCaseRetriever:
         index_path = Path(index_path)
         metadata_path = Path(metadata_path)
 
+        # SearchService reaches this constructor only after the textbook phase
+        # decides the case is uncertain enough to inspect rare cardiology data.
+        # The index and metadata are loaded once here, then reused through the
+        # singleton held inside search_service.py.
+
         # ----- Load FAISS index -----
         if not index_path.exists():
             raise FileNotFoundError(f"Rare-case FAISS index not found: {index_path}")
@@ -130,6 +135,8 @@ class RareCaseRetriever:
 
     def embed_query(self, query: str) -> np.ndarray:
         """Embed a query string and L2-normalise for cosine similarity."""
+        # SearchService already prepared the rare_query; this method only turns
+        # that text into the vector space expected by the rare-case FAISS index.
         vec = self.model.encode([query], show_progress_bar=False)[0]
         norm = np.linalg.norm(vec)
         if norm > 0:
@@ -145,6 +152,9 @@ class RareCaseRetriever:
         Return the *top_k* rare-case records most semantically similar
         to *query*.  Scores are cosine-similarity values in [0, 1].
         """
+        # This is called by SearchService.search_rare_cases(). The retriever
+        # does not decide whether the rare branch should run; it only returns
+        # the nearest rare-case matches once the gate is already open.
         qvec = self.embed_query(query).reshape(1, -1)
 
         # IndexFlatIP → inner product on L2-normed vectors = cosine sim
@@ -178,6 +188,9 @@ class RareCaseRetriever:
 
     def get_context_string(self, query: str, top_k: int = 3) -> str:
         """Format search results into a readable context block."""
+        # SearchService appends this block to the textbook context so KRA can
+        # see both the standard reference material and the rare-case evidence
+        # in one prompt context string.
         results = self.search(query, top_k)
         if not results:
             return ""
@@ -199,6 +212,9 @@ class RareCaseRetriever:
 
     def calculate_quality(self, query: str, top_k: int = 5) -> Dict:
         """Score-distribution metrics for the rare-case search."""
+        # The quality summary is mainly useful for debugging and audit logs.
+        # The live gate is handled in SearchService, but this method keeps the
+        # rare-search outputs easy to inspect.
         results = self.search(query, top_k)
         if not results:
             return {"status": "NO_RESULTS", "top_score": 0.0, "avg_score": 0.0}

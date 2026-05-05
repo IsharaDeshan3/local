@@ -190,9 +190,103 @@ function hasSinhala(s: string): boolean {
   return /[\u0D80-\u0DFF]/.test(s);
 }
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function humanizeKey(key: string): string {
+  return key.replace(/_/g, " ").replace(/\b\w/g, (match) => match.toUpperCase());
+}
+
+function formatDisplayValue(value: unknown): string {
+  if (value == null) return "";
+
+  if (typeof value === "string") {
+    return value
+      .replace(/```(?:json|markdown)?/gi, "")
+      .replace(/```/g, "")
+      .replace(/\[object Object\]/gi, "")
+      .replace(/\s{2,}/g, " ")
+      .trim();
+  }
+
+  if (
+    typeof value === "number" ||
+    typeof value === "boolean" ||
+    typeof value === "bigint"
+  ) {
+    return String(value);
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(formatDisplayValue).filter(Boolean).join(", ");
+  }
+
+  if (isPlainRecord(value)) {
+    const label =
+      formatDisplayValue(value.label) ||
+      formatDisplayValue(value.name) ||
+      formatDisplayValue(value.test) ||
+      formatDisplayValue(value.test_name) ||
+      formatDisplayValue(value.parameter);
+    const mainValue =
+      formatDisplayValue(value.value) ||
+      formatDisplayValue(value.result) ||
+      formatDisplayValue(value.reading) ||
+      formatDisplayValue(value.text) ||
+      formatDisplayValue(value.interpretation) ||
+      formatDisplayValue(value.severity) ||
+      formatDisplayValue(value.actualValue);
+    const unit = formatDisplayValue(value.unit) || formatDisplayValue(value.units);
+
+    if (label || mainValue || unit) {
+      const parts = [label, mainValue].filter(Boolean);
+      const base = parts.join(": ");
+      return unit ? `${base}${base ? " " : ""}${unit}`.trim() : base;
+    }
+
+    const entries = Object.entries(value)
+      .map(([key, entryValue]) => {
+        const formatted = formatDisplayValue(entryValue);
+        return formatted ? `${humanizeKey(key)}: ${formatted}` : "";
+      })
+      .filter(Boolean);
+    return entries.join(" • ");
+  }
+
+  return "";
+}
+
 function cleanStr(s: unknown): string | null {
-  if (typeof s !== "string" || !s.trim() || hasSinhala(s)) return null;
-  return s.trim();
+  const text = formatDisplayValue(s);
+  if (!text || hasSinhala(text)) return null;
+  return text;
+}
+
+function sanitizeLegacyObjectText(text: string): string {
+  if (!text) return "";
+
+  let cleaned = text;
+  cleaned = cleaned.replace(
+    /\{[^{}]*['"]differential['"]\s*:\s*['"]([^'"]+)['"][^{}]*\}/gi,
+    "$1",
+  );
+  cleaned = cleaned.replace(
+    /\{[^{}]*['"]condition['"]\s*:\s*['"]([^'"]+)['"][^{}]*\}/gi,
+    "$1",
+  );
+  cleaned = cleaned.replace(
+    /\{[^{}]*['"]test(?:_name)?['"]\s*:\s*['"]([^'"]+)['"][^{}]*\}/gi,
+    "$1",
+  );
+  cleaned = cleaned.replace(
+    /\{[^{}]*['"]value['"]\s*:\s*['"]([^'"]+)['"][^{}]*\}/gi,
+    "$1",
+  );
+  cleaned = cleaned.replace(/^[\s\[{]*(?:'rank'|"rank")[^\n]*$/gim, "");
+  cleaned = cleaned.replace(/^[\s\[{]*\{.*\}[\s\]}]*$/gm, "");
+
+  return cleaned.replace(/\s{2,}/g, " ").trim();
 }
 
 interface StructuredSymptoms {
@@ -260,8 +354,8 @@ function extractSymptomsSummary(
   const parts = [s.chiefComplaint, ...s.symptoms.slice(0, 3)].filter(Boolean);
   if (parts.length) return parts.join(" | ");
   // fallback: cleaned text field
-  const raw = symptomsJson.text;
-  if (typeof raw === "string" && !hasSinhala(raw)) return raw.slice(0, 120);
+  const raw = cleanStr(symptomsJson.text);
+  if (raw) return raw.slice(0, 120);
   return "Symptoms recorded";
 }
 
@@ -284,7 +378,8 @@ function extractEcgFields(
   };
   for (const [key, label] of Object.entries(map)) {
     if (ecgJson[key] !== undefined && ecgJson[key] !== null) {
-      fields.push({ label, value: String(ecgJson[key]) });
+      const value = cleanStr(ecgJson[key]);
+      if (value) fields.push({ label, value });
     }
   }
   return fields.length
@@ -313,9 +408,11 @@ function extractLabFields(
   const fields: Array<{ label: string; value: string }> = [];
   for (const key of keys) {
     if (labsJson[key] !== undefined && labsJson[key] !== null) {
+      const value = cleanStr(labsJson[key]);
+      if (!value) continue;
       fields.push({
         label: key.charAt(0).toUpperCase() + key.slice(1),
-        value: String(labsJson[key]),
+        value,
       });
     }
   }
@@ -343,10 +440,13 @@ function normalizeOraMode(value: unknown): OraMode {
 }
 
 function cleanDiagnosisOutput(raw: string): string {
-  const text = String(raw || "")
+  let text = String(raw || "")
     .replace(/```markdown/gi, "")
     .replace(/```/g, "")
     .trim();
+  if (!text) return "";
+
+  text = sanitizeLegacyObjectText(text);
   if (!text) return "";
 
   const leakMatch = text.match(
@@ -1525,11 +1625,12 @@ export default function PatientHistory({
                   resolvedOra.outputs.seasoned ||
                   resolvedOra.outputs.newbie ||
                   "";
-                const selectedDisclaimer =
+                const selectedDisclaimer = cleanDiagnosisOutput(
                   resolvedOra.disclaimers[selectedMode] ||
                   resolvedOra.disclaimers.seasoned ||
                   resolvedOra.disclaimers.newbie ||
-                  "";
+                  "",
+                );
                 const hasDualModeOutput = Boolean(
                   resolvedOra.outputs.newbie && resolvedOra.outputs.seasoned,
                 );
@@ -1540,7 +1641,9 @@ export default function PatientHistory({
                     : resolvedOra.outputs.newbie
                       ? "newbie"
                       : null;
-                const diagnosisSections = parseDiagnosisOutput(selectedOutput);
+                const diagnosisSections = parseDiagnosisOutput(
+                  cleanDiagnosisOutput(selectedOutput),
+                );
                 const hasDiagnosisOutput = Boolean(selectedOutput.trim());
                 const structuredSymptoms = extractStructuredSymptoms(
                   record.symptoms_json,
@@ -2256,6 +2359,14 @@ export default function PatientHistory({
                           </div>
                           {lab.labComparison.map((item, i) => {
                             const isNormal = item.status === "Normal";
+                            const testText = formatDisplayValue(item.test);
+                            const actualValueText = formatDisplayValue(
+                              item.actualValue,
+                            );
+                            const normalRangeText = formatDisplayValue(
+                              item.normalRange,
+                            );
+                            const statusText = formatDisplayValue(item.status);
                             return (
                               <div
                                 key={i}
@@ -2264,15 +2375,15 @@ export default function PatientHistory({
                                 } ${!isNormal ? "bg-rose-500/2" : ""}`}
                               >
                                 <span className="text-xs font-semibold">
-                                  {item.test}
+                                  {testText}
                                 </span>
                                 <span
                                   className={`text-xs font-mono text-center font-bold ${!isNormal ? "text-rose-400" : "text-foreground/80"}`}
                                 >
-                                  {item.actualValue}
+                                  {actualValueText}
                                 </span>
                                 <span className="text-xs text-muted-foreground text-center font-mono">
-                                  {item.normalRange}
+                                  {normalRangeText}
                                 </span>
                                 <div className="flex justify-end">
                                   <Badge
@@ -2287,7 +2398,7 @@ export default function PatientHistory({
                                     ) : (
                                       <TrendingDown className="h-2.5 w-2.5" />
                                     )}
-                                    {item.status}
+                                    {statusText}
                                   </Badge>
                                 </div>
                               </div>
@@ -2307,7 +2418,7 @@ export default function PatientHistory({
       {activeTab === "summary" &&
         (() => {
           const summarySections = parseDiagnosisOutput(
-            historySummary?.summary_text ?? "",
+            cleanDiagnosisOutput(historySummary?.summary_text ?? ""),
           );
           return (
             <div className="space-y-4">
@@ -2519,7 +2630,7 @@ export default function PatientHistory({
                   ) : (
                     <div className="rounded-xl border border-border/15 bg-white/2 p-5">
                       <p className="text-sm text-foreground/85 leading-relaxed">
-                        {historySummary?.summary_text ||
+                        {cleanDiagnosisOutput(historySummary?.summary_text ?? "") ||
                           "No prior AI diagnosis or lab history available for this patient."}
                       </p>
                     </div>
@@ -2547,8 +2658,8 @@ export default function PatientHistory({
                             className="flex items-center gap-2 p-2.5 rounded-lg bg-amber-500/5 border border-amber-500/10"
                           >
                             <span className="h-1.5 w-1.5 rounded-full bg-amber-400 shrink-0" />
-                            <span className="text-xs font-semibold text-foreground/85">
-                              {condition}
+                              <span className="text-xs font-semibold text-foreground/85">
+                              {formatDisplayValue(condition)}
                             </span>
                           </div>
                         ))}
@@ -2579,8 +2690,8 @@ export default function PatientHistory({
                             className="flex items-center gap-2 p-2.5 rounded-lg bg-cyan-500/5 border border-cyan-500/10"
                           >
                             <Minus className="h-3 w-3 text-cyan-400 shrink-0" />
-                            <span className="text-xs font-semibold text-foreground/85">
-                              {finding}
+                              <span className="text-xs font-semibold text-foreground/85">
+                              {formatDisplayValue(finding)}
                             </span>
                           </div>
                         ))}

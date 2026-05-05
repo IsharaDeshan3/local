@@ -91,6 +91,7 @@ async def lifespan(app: FastAPI):
             (time.perf_counter() - faiss_started) * 1000,
         )
     except Exception:
+         
         logger.warning("FAISS index preload failed - first search will be slower")
         logger.exception("FAISS preload exception")
 

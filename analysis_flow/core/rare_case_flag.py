@@ -113,6 +113,9 @@ class RareCaseFlag:
         RareCaseAlert
             With ``triggered=True`` if the alert should be shown.
         """
+        # SearchService hands this method the rare-case hits and the
+        # contradiction report from NegativeFilter. This is the final decision
+        # layer before WorkflowService persists the alert with the patient run.
         if not rare_results:
             return RareCaseAlert(triggered=False, reasoning="No rare-case matches found")
 
@@ -176,6 +179,8 @@ class RareCaseFlag:
         report: ContradictionReport,
         all_matches: List[Dict],
     ) -> RareCaseAlert:
+        # Build the structured object that WorkflowService stores in the run
+        # history and later exposes to the frontend.
         return RareCaseAlert(
             triggered=True,
             condition=top.keyword,

@@ -29,7 +29,7 @@ interface UploadedReportInput {
 }
 
 interface OrchestrateRequest {
-  patientId: string;
+  patientId?: string;
   patientName?: string;
   reports: UploadedReportInput[];
   options?: {
@@ -554,6 +554,12 @@ async function createLabAgentJob(
   });
 }
 
+function createAnonymousLabPatientId(patientName?: string): string {
+  const namePart = normalizeName(patientName) || "anonymous";
+  const sanitized = namePart.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return `lab-${sanitized || "anonymous"}-${Date.now().toString(36)}`;
+}
+
 function emit(controller: ReadableStreamDefaultController<Uint8Array>, payload: unknown) {
   const encoder = new TextEncoder();
   controller.enqueue(encoder.encode(`${JSON.stringify(payload)}\n`));
@@ -577,10 +583,6 @@ function stepCompleted(
 
 export async function POST(req: NextRequest) {
   const payload = (await req.json()) as OrchestrateRequest;
-
-  if (!payload?.patientId) {
-    return Response.json({ error: "patientId is required" }, { status: 400 });
-  }
   if (!Array.isArray(payload.reports) || payload.reports.length === 0) {
     return Response.json({ error: "At least one report is required" }, { status: 400 });
   }
@@ -591,8 +593,11 @@ export async function POST(req: NextRequest) {
         try {
           const startedAt = Date.now();
           const reportResults: ReportOrchestrationResult[] = [];
+          const frontendPatientId = String(payload.patientId ?? "").trim();
+          const resolvedFrontendPatientId =
+            frontendPatientId || createAnonymousLabPatientId(payload.patientName);
           const resolvedLabPatientId = await resolveLabBackendPatientId(
-            payload.patientId,
+            resolvedFrontendPatientId,
             payload.patientName,
           );
 
@@ -775,7 +780,7 @@ export async function POST(req: NextRequest) {
               startedAt,
               finishedAt: Date.now(),
               durationMs: Date.now() - startedAt,
-              patientId: payload.patientId,
+              patientId: resolvedFrontendPatientId,
               reports: reportResults,
               labAgent: {
                 job: labAgentJob,

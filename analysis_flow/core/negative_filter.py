@@ -1,5 +1,4 @@
 """
-core/negative_filter.py
 
 Detects contradictions between a "common diagnosis" match and the
 patient's actual ECG / lab data.
@@ -17,9 +16,6 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-# -------------------------------------------------------------------- #
-#  Expected findings for common conditions                               #
-# -------------------------------------------------------------------- #
 
 CONDITION_PROFILES: Dict[str, Dict[str, Any]] = {
     "myocardial infarction": {
@@ -122,6 +118,10 @@ class NegativeFilter:
         symptoms_text: str = "",
     ) -> ContradictionReport:
 
+        # SearchService calls this after a candidate common diagnosis has been
+        # selected from textbook retrieval. The goal is to compare the common
+        # hypothesis against the actual ECG/lab/symptom evidence before the rare
+        # alert is allowed to fire.
         ecg_findings = ecg_findings or []
         lab_values = lab_values or {}
         lab_findings = lab_findings or []
@@ -155,6 +155,9 @@ class NegativeFilter:
 
     @staticmethod
     def _resolve_profile(condition: str) -> Optional[Dict[str, Any]]:
+        # The common-condition label comes from SearchService's textbook phase.
+        # This helper maps that label to a known profile so contradictions can
+        # be checked against condition-specific expectations.
         cond_lower = condition.lower().strip()
         for name, profile in CONDITION_PROFILES.items():
             if cond_lower == name or cond_lower in profile.get("aliases", []):
@@ -171,6 +174,9 @@ class NegativeFilter:
         ecg_findings: List[str],
         report: ContradictionReport,
     ) -> None:
+        # ECG evidence is compared against the expected pattern for the common
+        # diagnosis. A mismatch becomes a contradiction signal for the rare
+        # case gate.
         expected = profile.get("expected_ecg", [])
         if not expected:
             return  # condition has no expected ECG pattern
@@ -196,6 +202,9 @@ class NegativeFilter:
         lab_findings: List[str],
         report: ContradictionReport,
     ) -> None:
+        # Lab values and lab findings are checked together because the workflow
+        # may provide either a structured numeric value or a flattened textual
+        # result depending on which step produced the data.
         expected_labs = profile.get("expected_labs", {})
         critical_labs = profile.get("critical_labs", [])
 
@@ -233,6 +242,9 @@ class NegativeFilter:
         report: ContradictionReport,
     ) -> None:
         """Flag symptoms that don't fit the common condition profile."""
+        # Symptoms are inspected last because they often provide the clearest
+        # contradiction signal when the textbook match looks plausible but the
+        # story does not fit the condition.
         if not symptoms_text:
             return
 

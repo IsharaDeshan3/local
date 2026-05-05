@@ -46,6 +46,38 @@ def _strip_prompt_scaffold(text: str) -> str:
     return text
 
 
+def _deobjectify_text(text: str) -> str:
+    """Replace Python-dict-like fragments with human-readable labels."""
+    if not text:
+        return ""
+
+    cleaned = text
+
+    # Typical KRA dict fragments copied into ORA outputs.
+    replacements = [
+        (r"\{[^{}]*'differential'\s*:\s*'([^']+)'[^{}]*\}", r"\1"),
+        (r"\{[^{}]*'condition'\s*:\s*'([^']+)'[^{}]*\}", r"\1"),
+        (r"\{[^{}]*'diagnosis'\s*:\s*'([^']+)'[^{}]*\}", r"\1"),
+        (r"\{[^{}]*'test(?:_name)?'\s*:\s*'([^']+)'[^{}]*\}", r"\1"),
+    ]
+    for pattern, repl in replacements:
+        cleaned = re.sub(pattern, repl, cleaned, flags=re.IGNORECASE | re.DOTALL)
+
+    # Handle malformed rank/differential fragments that may miss braces formatting.
+    cleaned = re.sub(
+        r"\*\*\s*\{?\s*'rank'\s*:?\s*\d+\s*,\s*'differential'\s*:\s*'([^']+)'[^*|]*\*\*",
+        r"**\1**",
+        cleaned,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+    # Remove noisy rank key leftovers.
+    cleaned = re.sub(r"'rank'\s*:?\s*\d+\s*,?\s*", "", cleaned, flags=re.IGNORECASE)
+
+    cleaned = re.sub(r"\s{2,}", " ", cleaned)
+    return cleaned.strip()
+
+
 def _sanitize_refined_output(text: str) -> str:
     cleaned = (text or "").strip()
     if not cleaned:
@@ -79,6 +111,18 @@ def _sanitize_refined_output(text: str) -> str:
 
     cleaned = _strip_prompt_scaffold(cleaned)
     cleaned = re.sub(r"(?im)^\s*Return only the final report content\..*$", "", cleaned).strip()
+    cleaned = _deobjectify_text(cleaned)
+
+    if "No supporting references were available in the prompt context" in cleaned and "[R" not in cleaned:
+        cleaned = re.sub(
+            r"(?is)\n?(?:###|##)\s*📚\s*REFERENCES\s*(?:---)?\s*.*$",
+            "",
+            cleaned,
+        ).strip()
+        cleaned = cleaned.replace(
+            "*No supporting references were available in the prompt context.*",
+            "",
+        ).strip()
 
     return cleaned
 
@@ -107,6 +151,48 @@ def _extract_gemini_text(payload: Dict[str, Any]) -> str:
 
 def _to_text_list(value: Any, *, max_items: int = 6) -> list[str]:
     """Normalize KRA fields into short plain-text lists."""
+
+    def _dict_to_text(entry: Dict[str, Any]) -> str:
+        """Render common KRA dict payloads into concise clinical text."""
+        if not isinstance(entry, dict):
+            return str(entry or "").strip()
+
+        primary = (
+            entry.get("differential")
+            or entry.get("condition")
+            or entry.get("diagnosis")
+            or entry.get("name")
+            or entry.get("test")
+            or entry.get("test_name")
+            or entry.get("finding")
+            or ""
+        )
+        primary_text = str(primary).strip()
+
+        extras: list[str] = []
+        confidence = entry.get("confidence")
+        if confidence not in (None, ""):
+            extras.append(f"confidence={confidence}")
+        severity = entry.get("severity")
+        if severity not in (None, ""):
+            extras.append(f"severity={severity}")
+        decisive = entry.get("decisiveFinding") or entry.get("decisive_finding")
+        if decisive not in (None, ""):
+            extras.append(f"clue={str(decisive).strip()}")
+
+        if primary_text and extras:
+            return f"{primary_text} ({'; '.join(extras)})"
+        if primary_text:
+            return primary_text
+
+        # Fallback for unknown dict schema.
+        rendered = [
+            f"{k}={v}"
+            for k, v in entry.items()
+            if v not in (None, "", [], {})
+        ]
+        return "; ".join(rendered)
+
     if value is None:
         items: list[Any] = []
     elif isinstance(value, list):
@@ -118,7 +204,10 @@ def _to_text_list(value: Any, *, max_items: int = 6) -> list[str]:
 
     out: list[str] = []
     for item in items:
-        text = str(item).strip()
+        if isinstance(item, dict):
+            text = _dict_to_text(item)
+        else:
+            text = str(item).strip()
         if not text:
             continue
         out.append(text)
@@ -252,38 +341,41 @@ def _build_fallback_report(*, level: str, kra_input: Dict[str, Any], kra_result:
             else ["*No immediate life-threatening concerns identified in this presentation.*"]
         )
 
-        return "\n".join(
-            [
-                "## AI Diagnosis",
-                "## 📋 DIAGNOSTIC SUMMARY",
-                "---",
-                "**Overview:** KRA indicates a clinically significant cardiopulmonary differential that requires urgent confirmation with targeted testing and close monitoring.",
-                "",
-                "**Clinical Picture:** " + evidence[0],
-                "",
-                "## 🔍 KEY FINDINGS",
-                "---",
-                "| Condition | Likelihood | Severity | Key Clue |",
-                "| :--- | :--- | :--- | :--- |",
-                *rows,
-                "",
-                "## ⚠️ URGENT CONCERNS (RED FLAGS)",
-                "---",
-                *red_flag_lines,
-                "",
-                "## 📝 DIAGNOSTIC GAPS",
-                "---",
-                *[f"* **Missing Data:** {gap}\n* **Impact:** Limits diagnostic confidence and should be addressed before definitive decisions." for gap in gaps[:4]],
-                "",
-                "## 🧪 RECOMMENDED WORKUP",
-                "---",
-                *workup_lines,
+        newbie_sections = [
+            "## AI Diagnosis",
+            "## 📋 DIAGNOSTIC SUMMARY",
+            "---",
+            "**Overview:** KRA indicates a clinically significant cardiopulmonary differential that requires urgent confirmation with targeted testing and close monitoring.",
+            "",
+            "**Clinical Picture:** " + evidence[0],
+            "",
+            "## 🔍 KEY FINDINGS",
+            "---",
+            "| Condition | Likelihood | Severity | Key Clue |",
+            "| :--- | :--- | :--- | :--- |",
+            *rows,
+            "",
+            "## ⚠️ URGENT CONCERNS (RED FLAGS)",
+            "---",
+            *red_flag_lines,
+            "",
+            "## 📝 DIAGNOSTIC GAPS",
+            "---",
+            *[f"* **Missing Data:** {gap}\n* **Impact:** Limits diagnostic confidence and should be addressed before definitive decisions." for gap in gaps[:4]],
+            "",
+            "## 🧪 RECOMMENDED WORKUP",
+            "---",
+            *workup_lines,
+        ]
+        if references:
+            newbie_sections.extend([
                 "",
                 "## 📚 REFERENCES",
                 "---",
-                *([f"- {ref}" for ref in references] if references else ["*No supporting references were available in the prompt context.*"]),
-            ]
-        )
+                *[f"- {ref}" for ref in references],
+            ])
+
+        return "\n".join(newbie_sections)
 
     diff_rows = []
     for idx, diagnosis in enumerate(diagnoses[:3], start=1):
@@ -303,37 +395,40 @@ def _build_fallback_report(*, level: str, kra_input: Dict[str, Any], kra_result:
         for idx, test in enumerate(recommended_tests[:5], start=1)
     ]
 
-    return "\n".join(
-        [
-            "## AI Diagnosis",
-            "# CLINICAL ASSESSMENT BRIEF",
-            "---",
-            "### 🩺 DIFFERENTIAL DIAGNOSIS",
-            "| Rank | Differential | Confidence | Severity | Decisive Finding |",
-            "| :--- | :--- | :--- | :--- | :--- |",
-            *diff_rows,
-            "",
-            "**Clinical Correlation:**",
-            "* **Supporting Evidence:** " + "; ".join(evidence[:3]),
-            "* **Pathophysiology:** Findings suggest active cardiopulmonary stress/injury pathway that needs rapid etiology confirmation.",
-            "* **Against:** Absence of complete multimodal data reduces certainty for definitive single-etiology assignment.",
-            "",
-            "### 🚩 CLINICAL CONCERNS",
-            *concern_lines,
-            "",
-            "### 🔍 DIAGNOSTIC GAPS & LIMITATIONS",
-            *[f"* **{gap}** -> *Impact: could materially shift risk stratification and treatment urgency.*" for gap in gaps[:4]],
-            "",
-            "### ⚡ RECOMMENDED WORKUP (PRIORITIZED)",
-            "| Priority | Investigation | Diagnostic Target |",
-            "| :--- | :--- | :--- |",
-            *workup_rows,
+    seasoned_sections = [
+        "## AI Diagnosis",
+        "# CLINICAL ASSESSMENT BRIEF",
+        "---",
+        "### 🩺 DIFFERENTIAL DIAGNOSIS",
+        "| Rank | Differential | Confidence | Severity | Decisive Finding |",
+        "| :--- | :--- | :--- | :--- | :--- |",
+        *diff_rows,
+        "",
+        "**Clinical Correlation:**",
+        "* **Supporting Evidence:** " + "; ".join(evidence[:3]),
+        "* **Pathophysiology:** Findings suggest active cardiopulmonary stress/injury pathway that needs rapid etiology confirmation.",
+        "* **Against:** Absence of complete multimodal data reduces certainty for definitive single-etiology assignment.",
+        "",
+        "### 🚩 CLINICAL CONCERNS",
+        *concern_lines,
+        "",
+        "### 🔍 DIAGNOSTIC GAPS & LIMITATIONS",
+        *[f"* **{gap}** -> *Impact: could materially shift risk stratification and treatment urgency.*" for gap in gaps[:4]],
+        "",
+        "### ⚡ RECOMMENDED WORKUP (PRIORITIZED)",
+        "| Priority | Investigation | Diagnostic Target |",
+        "| :--- | :--- | :--- |",
+        *workup_rows,
+    ]
+    if references:
+        seasoned_sections.extend([
             "",
             "### 📚 REFERENCES",
             "---",
-            *([f"- {ref}" for ref in references] if references else ["*No supporting references were available in the prompt context.*"]),
-        ]
-    )
+            *[f"- {ref}" for ref in references],
+        ])
+
+    return "\n".join(seasoned_sections)
 
 
 class ORAClient:
@@ -429,6 +524,11 @@ class ORAClient:
         """Refine KRA output by calling Gemini generateContent API."""
         from core.ora_prompt import build_ora_prompt
 
+        # WorkflowService is the caller here. It passes the KRA result, the
+        # retrieval context assembled by SearchService, and the normalized
+        # symptoms text. ORAClient turns that bundle into a prompt, sends it to
+        # Gemini, then sanitizes the response before it is saved back to the
+        # session history and shown in the UI.
         level = experience_level.upper()
         if level not in _VALID_LEVELS:
             logger.warning("Invalid experience_level '%s', defaulting to 'SEASONED'", experience_level)
@@ -454,6 +554,9 @@ class ORAClient:
             experience_level=level,
         )
 
+        # The request body is the raw Gemini call. The prompt already contains
+        # the compacted retrieval context and KRA snapshot, so this layer just
+        # forwards it as a single text generation request.
         request_body: Dict[str, Any] = {
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
             "generationConfig": {
@@ -531,6 +634,9 @@ class ORAClient:
         refined_output = _sanitize_refined_output(raw_text)
         status = "success"
 
+        # If the model response is incomplete, build a deterministic fallback
+        # from the same KRA input so the workflow still returns a usable report
+        # instead of failing the whole patient analysis run.
         if _is_report_incomplete(refined_output, level):
             logger.warning(
                 "ORA output looked incomplete for level=%s (chars=%d); using structured fallback renderer",

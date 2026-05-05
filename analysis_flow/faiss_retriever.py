@@ -236,3 +236,5 @@ class FAISSRetriever:
             "avg_score": avg_score,
             "num_results": len(results),
         }
+
+        

@@ -9,7 +9,7 @@ from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 from typing import Any, Optional
 
 from backend.processing.kra_client import KRAClient
-from backend.processing.ora_client import ORAClient
+from backend.processing.ora_client import ORAClient 
 from backend.processing.search_service import SearchService
 from core.rare_case_flag import RareCaseAlert
 from backend.processing.supabase_payload import (
@@ -484,666 +484,6 @@ class WorkflowService:
                 "error": str(exc),
             }
 
-    def _run_analysis_pipeline(
-        self,
-        session_id: str,
-        experience_level: str,
-        extraction_payload: dict[str, Any],
-        ecg_payload: dict[str, Any],
-        lab_payload: dict[str, Any],
-        started: float,
-        patient_id: Optional[str] = None,
-    ) -> dict[str, Any]:
-        """Core pipeline: normalize -> retrieve -> KRA -> ORA -> persist -> return."""
-        processing_steps: list[dict[str, Any]] = []
-        self._raise_if_cancelled(session_id)
-
-        # ── Step 0: Normalise inputs ──────────────────────────────────────────
-        # The normalized payload is the common shape used by search_service.py,
-        # kra_client.py, and the Supabase persistence helpers.
-        symptoms_json, symptoms_text = self._normalize_symptoms_payload(extraction_payload)
-        ecg_json = self._normalize_ecg_payload(ecg_payload)
-        labs_json = self._normalize_lab_payload(lab_payload)
-
-        ecg_findings: list[str] = ecg_json.get("findings", []) if ecg_json.get("status") == "present" else []
-        lab_findings: list[str] = labs_json.get("findings", []) if labs_json.get("status") == "present" else []
-        lab_values: dict[str, float] = {
-            marker: value
-            for marker, value in {
-                "troponin": labs_json.get("troponin"),
-                "ldh": labs_json.get("ldh"),
-                "bnp": labs_json.get("bnp"),
-                "creatinine": labs_json.get("creatinine"),
-                "hemoglobin": labs_json.get("hemoglobin"),
-            }.items()
-            if isinstance(value, (int, float))
-        }
-        self._emit(session_id, "session_init", "completed")
-
-        # ── Step 1: Textbook retrieval, then uncertainty-gated rare cases ───
-        self._emit(session_id, "faiss_search", "started")
-        retrieval_started = time.time()
-        patient_vector, textbook_context, quality = self._search.search_textbook(
-            symptoms_text=symptoms_text,
-            top_k=5,
-            ecg_findings=ecg_findings,
-            lab_findings=lab_findings,
-            lab_values=lab_values,
-            age=None,  # Add appropriate value if available
-            sex=None,  # Add appropriate value if available
-            chief_complaint=None  # Add appropriate value if available
-        )
-        retrieval_ms = int((time.time() - retrieval_started) * 1000)
-        quality: dict[str, Any] = (
-            dict(quality) if isinstance(quality, dict) else {"status": "LOW_CONFIDENCE"}
-        )
-
-        processing_steps.append(
-            {
-                "step": "faiss_search",
-                "status": "success",
-                "duration_ms": retrieval_ms,
-                "rare_gate": quality.get("rare_search_gate"),
-            }
-        )
-        self._emit(session_id, "faiss_search", "completed", duration_ms=retrieval_ms)
-        self._raise_if_cancelled(session_id)
-
-        context_sections: list[str] = [textbook_context] if textbook_context else []
-        rare_context = ""
-        rare_alert = RareCaseAlert(
-            triggered=False,
-            reasoning="Rare-case search gated off by uncertainty policy",
-        )
-
-        rare_gate = self._search.should_search_rare_cases(
-            quality=quality,
-            ecg_findings=ecg_findings,
-            lab_findings=lab_findings,
-            lab_values=lab_values,
-        )
-
-        quality["rare_search_gate"] = rare_gate.get("reason")
-        quality.setdefault("rare_cases_searched", 0)
-        quality.setdefault("rare_top_score", 0.0)
-
-        self._store.save_retrieval_context(
-            session_id=session_id,
-            source_type="books",
-            content=textbook_context,
-            metadata={
-                "quality": quality,
-                "experience_level": experience_level,
-                "rare_search_gate": rare_gate,
-            },
-        )
-
-        if rare_gate.get("trigger_rare_search"):
-            self._emit(session_id, "rare_case_search", "started")
-            rare_started = time.time()
-            rare_context, rare_quality, rare_alert = self._search.search_rare_cases(
-                patient_vector=patient_vector,
-                symptoms_text=symptoms_text,
-                ecg_findings=ecg_findings,
-                lab_findings=lab_findings,
-                lab_values=lab_values,
-                common_condition=str(quality.get("top_common_condition") or ""),
-            )
-            rare_ms = int((time.time() - rare_started) * 1000)
-            quality.update(rare_quality)
-            if rare_context:
-                context_sections.append(rare_context)
-                self._store.save_retrieval_context(
-                    session_id=session_id,
-                    source_type="rare_cases",
-                    content=rare_context,
-                    metadata={
-                        "rare_alert": rare_alert.to_dict(),
-                        "rare_search_gate": rare_gate,
-                        "rare_top_score": quality.get("rare_top_score"),
-                    },
-                    score=float(quality.get("rare_top_score", 0.0) or 0.0),
-                )
-            processing_steps.append(
-                {
-                    "step": "rare_case_search",
-                    "status": "success",
-                    "duration_ms": rare_ms,
-                    "triggered": bool(rare_alert.triggered),
-                    "top_score": float(quality.get("rare_top_score", 0.0) or 0.0),
-                }
-            )
-            self._emit(
-                session_id,
-                "rare_case_search",
-                "completed",
-                duration_ms=rare_ms,
-                triggered=bool(rare_alert.triggered),
-                top_score=float(quality.get("rare_top_score", 0.0) or 0.0),
-            )
-        else:
-            processing_steps.append(
-                {
-                    "step": "rare_case_search",
-                    "status": "skipped",
-                    "duration_ms": 0,
-                    "reason": rare_gate.get("reason"),
-                }
-            )
-            self._emit(
-                session_id,
-                "rare_case_search",
-                "completed",
-                duration_ms=0,
-                triggered=False,
-                skipped=True,
-                reason=rare_gate.get("reason"),
-            )
-        self._raise_if_cancelled(session_id)
-
-        context_text = "\n\n".join(section.strip() for section in context_sections if str(section).strip())
-
-        # ── Step 2 + 3: History fetch, payload save, and KRA run in parallel ──
-        # Saving the payload and fetching history don't need to wait for model
-        # inference, so the pipeline overlaps all three to reduce wall-clock time.
-        cancel_event = self._get_or_create_cancel_event(session_id)
-        self._emit(session_id, "supabase_save_payload", "started")
-        self._emit(session_id, "kra_analysis", "started")
-
-        def run_history_fetch() -> dict[str, Any]:
-            """Step 2: Load longitudinal history summary for KRA (non-blocking)."""
-            bundle: dict[str, Any] = {"patient_id": patient_id, "summary": {}, "records": []}
-            if patient_id:
-                try:
-                    bundle = get_patient_history_bundle(patient_id)
-                except Exception as exc:
-                    logger.warning("Patient history summary fetch failed for %s: %s", patient_id, exc)
-            return bundle
-
-        def run_payload_save(history_bundle_ref: list) -> dict[str, Any]:
-            """Worker: persist the normalized request snapshot and timing metadata."""
-            started_at = time.time()
-            # Wait for history to be available from the shared ref
-            hb = history_bundle_ref[0] if history_bundle_ref else {"patient_id": patient_id, "summary": {}, "records": []}
-            compact_history = self._compact_history_bundle_for_payload(hb)
-            result = self._save_payload_snapshot(
-                session_id=session_id,
-                symptoms_json=symptoms_json,
-                ecg_json=ecg_json,
-                labs_json=labs_json,
-                context_text=context_text,
-                quality=quality,
-                history_json=compact_history,
-                patient_id=patient_id,
-            )
-            result["duration_ms"] = int((time.time() - started_at) * 1000)
-            return result
-
-        def run_kra_analysis(history_bundle_ref: list) -> dict[str, Any]:
-            """Worker: run KRA with retrieved context and optional history summary."""
-            started_at = time.time()
-            # Extract history summary text from the fetched bundle
-            hb = history_bundle_ref[0] if history_bundle_ref else {}
-            hs = hb.get("summary") or {} if isinstance(hb, dict) else {}
-            h_text = str(hs.get("summary_text") or "").strip()
-
-            result = self._kra.analyze(
-                symptoms_text=symptoms_text,
-                context_text=context_text,
-                ecg_dict=ecg_json,
-                labs_dict=labs_json,
-                history_summary_text=h_text,
-                cancel_event=cancel_event,
-            )
-            return {
-                "kra_result": result,
-                "duration_ms": int((time.time() - started_at) * 1000),
-                "history_injected": bool(h_text),
-            }
-
-        # Phase 1: Fetch history first (fast network call), then fire payload+KRA in parallel
-        with ThreadPoolExecutor(max_workers=3) as executor:
-            # Stage A: fetch history first so both downstream workers use same data.
-            history_future = executor.submit(run_history_fetch)
-
-            # Wait for history before starting payload save and KRA (they both need it)
-            try:
-                history_bundle = history_future.result(timeout=15)
-            except Exception as exc:
-                logger.warning("History fetch timed out or failed: %s", exc)
-                history_bundle = {"patient_id": patient_id, "summary": {}, "records": []}
-
-            history_summary = history_bundle.get("summary") or {} if isinstance(history_bundle, dict) else {}
-            history_summary_text = str(history_summary.get("summary_text") or "").strip()
-
-            # Shared ref so both workers see the same history
-            history_ref = [history_bundle]
-
-            payload_future = executor.submit(run_payload_save, history_ref)
-            kra_future = executor.submit(run_kra_analysis, history_ref)
-            done, pending = wait(
-                {payload_future, kra_future},
-                timeout=self._kra_timeout_seconds(),
-                return_when=FIRST_EXCEPTION,
-            )
-            if kra_future not in done:
-                cancel_event.set()
-                logger.error("KRA analysis timed out for session %s after %.1fs", session_id, self._kra_timeout_seconds())
-                raise RuntimeError("KRA_TIMEOUT")
-            first_error = next((future.exception() for future in done if future.exception() is not None), None)
-            if first_error is not None:
-                cancel_event.set()
-                for future in pending:
-                    future.cancel()
-                raise first_error
-            payload_result = payload_future.result()
-            self._raise_if_cancelled(session_id)
-            kra_run = kra_future.result()
-
-        payload_id = payload_result["payload_id"]
-        payload_url = payload_result.get("payload_url")
-        supabase_available = bool(payload_result.get("supabase_available"))
-        payload_ms = int(payload_result.get("duration_ms") or 0)
-        kra_result = kra_run["kra_result"]
-        kra_ms = int(kra_run.get("duration_ms") or 0)
-
-        logger.info(
-            "KRA output for session %s\n%s\n%s",
-            session_id,
-            "=" * 80,
-            str(kra_result.get("raw_text") or "[empty KRA output]"),
-        )
-        if not self._is_valid_kra_result(kra_result):
-            logger.error(
-                "KRA produced invalid output for session %s; aborting before ORA. Raw output:\n%s",
-                session_id,
-                str(kra_result.get("raw_text") or "[empty KRA output]"),
-            )
-            raise RuntimeError("KRA_OUTPUT_INVALID_JSON")
-
-        processing_steps.append(
-            {
-                "step": "supabase_save_payload",
-                "status": "success" if supabase_available else "offline_fallback",
-                "duration_ms": payload_ms,
-                "supabase_id": payload_id,
-                "supabase_available": supabase_available,
-            }
-        )
-        processing_steps.append(
-            {
-                "step": "kra_analysis",
-                "status": "success",
-                "duration_ms": kra_ms,
-                "history_injected": bool(history_summary_text),
-            }
-        )
-        self._emit(
-            session_id,
-            "supabase_save_payload",
-            "completed",
-            duration_ms=payload_ms,
-            supabase_available=supabase_available,
-        )
-        self._emit(
-            session_id,
-            "kra_analysis",
-            "completed",
-            duration_ms=kra_ms,
-            history_injected=bool(history_summary_text),
-        )
-        self._raise_if_cancelled(session_id)
-
-        # ── Step 4: Persist KRA and run ORA outputs (NEWBIE + SEASONED) ─────
-        # ORA only needs KRA output, so we run both experience levels once and
-        # return both variants to the frontend toggle.
-        kra_input_package = {
-            "session_id": session_id,
-            "symptoms_text": symptoms_text,
-            "context_text": context_text,
-            "ecg": ecg_json,
-            "labs": labs_json,
-            "history_summary_text": history_summary_text,
-            "quality": quality,
-        }
-
-        requested_level = str(experience_level or "seasoned").strip().upper()
-        if requested_level not in {"NEWBIE", "SEASONED"}:
-            requested_level = "SEASONED"
-
-        self._emit(session_id, "supabase_save_kra", "started")
-        self._emit(session_id, "ora_refinement", "started")
-
-        def run_kra_persist() -> dict[str, Any]:
-            """Worker: persist KRA output while ORA refinement executes in parallel."""
-            started_at = time.time()
-            if not supabase_available:
-                return {
-                    "kra_id": str(uuid.uuid4()),
-                    "kra_url": None,
-                    "supabase_available": False,
-                    "error": "PAYLOAD_SAVE_UNAVAILABLE",
-                    "duration_ms": int((time.time() - started_at) * 1000),
-                }
-            result = self._save_kra_history_entry(
-                session_id=session_id,
-                payload_id=payload_id,
-                symptoms_text=symptoms_text,
-                kra_result=kra_result,
-                patient_id=patient_id,
-            )
-            result["duration_ms"] = int((time.time() - started_at) * 1000)
-            return result
-
-        def run_ora_refinement(level: str) -> dict[str, Any]:
-            """Worker: produce one ORA variant for a specific experience level."""
-            started_at = time.time()
-            result = self._ora.refine(
-                kra_input=kra_input_package,
-                kra_result=kra_result,
-                symptoms_text=symptoms_text,
-                experience_level=level,
-                cancel_event=cancel_event,
-            )
-            return {
-                "level": level,
-                "ora_result": result,
-                "duration_ms": int((time.time() - started_at) * 1000),
-            }
-
-        ora_levels = ["NEWBIE", "SEASONED"]
-        selected_key = requested_level.lower()
-        if selected_key not in {"newbie", "seasoned"}:
-            selected_key = "seasoned"
-        ora_runs: dict[str, dict[str, Any]] = {}
-        ora_failures: dict[str, str] = {}
-
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            # Stage B: run KRA persistence + dual ORA variants concurrently.
-            kra_save_future = executor.submit(run_kra_persist)
-            ora_futures = {
-                level: executor.submit(run_ora_refinement, level)
-                for level in ora_levels
-            }
-            primary_future = ora_futures[selected_key.upper()]
-            required_futures = {kra_save_future, primary_future}
-            done_required, pending_required = wait(
-                required_futures,
-                timeout=self._ora_timeout_seconds(),
-                return_when=FIRST_EXCEPTION,
-            )
-
-            if primary_future not in done_required:
-                cancel_event.set()
-                logger.error("ORA refinement timed out for session %s after %.1fs", session_id, self._ora_timeout_seconds())
-                for future in ora_futures.values():
-                    future.cancel()
-                raise RuntimeError("ORA_TIMEOUT")
-
-            kra_error = kra_save_future.exception() if kra_save_future in done_required else None
-            primary_error = primary_future.exception() if primary_future in done_required else None
-            if kra_error is not None or primary_error is not None:
-                cancel_event.set()
-                for future in ora_futures.values():
-                    future.cancel()
-                raise kra_error or primary_error
-
-            secondary_futures = {
-                level: future
-                for level, future in ora_futures.items()
-                if future is not primary_future
-            }
-            secondary_done = set()
-            if secondary_futures:
-                secondary_done, _ = wait(
-                    set(secondary_futures.values()),
-                    timeout=self._ora_secondary_timeout_seconds(),
-                )
-
-            for level, future in ora_futures.items():
-                level_key = level.lower()
-                if future in done_required or future in secondary_done:
-                    try:
-                        ora_runs[level_key] = future.result()
-                    except Exception as exc:
-                        ora_failures[level_key] = str(exc)
-                else:
-                    # Secondary mode may exceed timeout; keep pipeline alive and
-                    # synthesize fallback from available mode below.
-                    future.cancel()
-                    ora_failures[level_key] = "ORA_TIMEOUT"
-
-            kra_save_result = kra_save_future.result()
-            self._raise_if_cancelled(session_id)
-
-            # Keep diagnosis flow resilient: primary ORA must exist, secondary
-            # mode is best-effort with deterministic fallback synthesis.
-            if selected_key not in ora_runs:
-                selected_err = ora_failures.get(selected_key) or "ORA_OUTPUT_EMPTY"
-                raise RuntimeError(selected_err)
-
-            # Ensure both experience-level outputs are always available so
-            # frontend toggles can switch between two concrete variants.
-            required_levels = ("newbie", "seasoned")
-            for missing_level in required_levels:
-                if missing_level in ora_runs:
-                    continue
-                source_level = "seasoned" if missing_level == "newbie" else "newbie"
-                source_payload = ora_runs.get(source_level)
-                if source_payload is None:
-                    continue
-
-                source_result = dict(source_payload.get("ora_result") or {})
-                source_text = str(source_result.get("refined_output") or "").strip()
-                source_disclaimer = str(source_result.get("disclaimer") or "").strip()
-                if not source_text:
-                    continue
-
-                label = "Newbie" if missing_level == "newbie" else "Seasoned"
-                fallback_text = (
-                    f"### {label} Output (Fallback)\n\n"
-                    "The dedicated ORA pass for this mode was unavailable in this run; "
-                    "showing the alternate mode output below.\n\n"
-                    f"{source_text}"
-                )
-                ora_runs[missing_level] = {
-                    "level": missing_level.upper(),
-                    "ora_result": {
-                        "refined_output": fallback_text,
-                        "disclaimer": source_disclaimer,
-                        "status": "partial_fallback",
-                    },
-                    "duration_ms": int(source_payload.get("duration_ms") or 0),
-                }
-
-            if ora_failures:
-                logger.warning("ORA secondary output failure(s) for session %s: %s", session_id, ora_failures)
-
-        kra_id = kra_save_result["kra_id"]
-        kra_url = kra_save_result.get("kra_url")
-        kra_save_ms = int(kra_save_result.get("duration_ms") or 0)
-        ora_outputs: dict[str, str] = {}
-        ora_disclaimers: dict[str, str] = {}
-        for level_key, payload in ora_runs.items():
-            ora_result = payload["ora_result"]
-            ora_outputs[level_key] = str(ora_result.get("refined_output") or "")
-            ora_disclaimers[level_key] = str(ora_result.get("disclaimer") or "")
-
-        # Best-effort: persist ORA outputs onto the payload row as well.
-        # This keeps history usable even if the separate ora_outputs inserts
-        # intermittently fail (network timeouts, transient Supabase issues).
-        if payload_url:
-            try:
-                enriched_quality = dict(quality or {})
-                enriched_quality["ora_outputs"] = dict(ora_outputs)
-                enriched_quality["ora_disclaimers"] = dict(ora_disclaimers)
-                update_analysis_payload(
-                    payload_id,
-                    {"quality_json": enriched_quality},
-                    timeout=60,
-                )
-            except Exception as exc:
-                logger.warning(
-                    "Failed to enrich analysis_payloads.quality_json with ORA outputs for payload %s: %s",
-                    payload_id,
-                    exc,
-                )
-
-        selected_ora_result = ora_runs[selected_key]["ora_result"]
-        ora_ms = int(ora_runs[selected_key].get("duration_ms") or 0)
-        supabase_available = supabase_available and bool(kra_save_result.get("supabase_available"))
-
-        logger.info(
-            "ORA output for session %s\n%s\n%s",
-            session_id,
-            "=" * 80,
-            str(selected_ora_result.get("refined_output") or "[empty ORA output]"),
-        )
-
-        processing_steps.append(
-            {
-                "step": "supabase_save_kra",
-                "status": "success" if kra_save_result.get("supabase_available") else "offline_fallback",
-                "duration_ms": kra_save_ms,
-                "supabase_id": kra_id,
-            }
-        )
-        processing_steps.append(
-            {
-                "step": "ora_refinement",
-                "status": selected_ora_result.get("status", "success"),
-                "duration_ms": ora_ms,
-                "experience_level": requested_level.lower(),
-                "available_levels": sorted(list(ora_outputs.keys())),
-            }
-        )
-        self._emit(
-            session_id,
-            "supabase_save_kra",
-            "completed",
-            duration_ms=kra_save_ms,
-            supabase_available=bool(kra_save_result.get("supabase_available")),
-        )
-        self._emit(
-            session_id,
-            "ora_refinement",
-            "completed",
-            duration_ms=ora_ms,
-            experience_level=requested_level.lower(),
-            available_levels=sorted(list(ora_outputs.keys())),
-        )
-        self._raise_if_cancelled(session_id)
-
-        # ── Step 5: Persist available ORA history entries ────────────────────
-        self._emit(session_id, "supabase_save_ora", "started")
-        ora_save_started = time.time()
-        ora_save_results: dict[str, dict[str, Any]] = {}
-        for level_key, payload in ora_runs.items():
-            if not supabase_available:
-                ora_save_results[level_key] = {
-                    "ora_id": str(uuid.uuid4()),
-                    "ora_url": None,
-                    "supabase_available": False,
-                    "error": "PAYLOAD_SAVE_UNAVAILABLE",
-                }
-                continue
-            try:
-                ora_save_results[level_key] = self._save_ora_history_entry(
-                    session_id=session_id,
-                    kra_output_id=kra_id,
-                    experience_level=level_key.upper(),
-                    ora_result=payload["ora_result"],
-                    patient_id=patient_id,
-                )
-            except Exception as exc:
-                logger.warning(
-                    "ORA history persistence failed for %s/%s: %s",
-                    session_id,
-                    level_key,
-                    exc,
-                )
-                ora_save_results[level_key] = {
-                    "ora_id": str(uuid.uuid4()),
-                    "ora_url": None,
-                    "supabase_available": False,
-                    "error": str(exc),
-                }
-        ora_save_ms = int((time.time() - ora_save_started) * 1000)
-        selected_ora_save = ora_save_results.get(selected_key, {})
-        selected_ora_id = selected_ora_save.get("ora_id") or ""
-        selected_ora_url = selected_ora_save.get("ora_url")
-        supabase_available = supabase_available and all(
-            bool(item.get("supabase_available"))
-            for item in ora_save_results.values()
-        )
-
-        processing_steps.append(
-            {
-                "step": "supabase_save_ora",
-                "status": "success" if all(bool(item.get("supabase_available")) for item in ora_save_results.values()) else "offline_fallback",
-                "duration_ms": ora_save_ms,
-                "supabase_id": selected_ora_id,
-                "saved_levels": sorted(list(ora_save_results.keys())),
-            }
-        )
-        self._emit(
-            session_id,
-            "supabase_save_ora",
-            "completed",
-            duration_ms=ora_save_ms,
-            supabase_available=all(bool(item.get("supabase_available")) for item in ora_save_results.values()),
-            saved_levels=sorted(list(ora_save_results.keys())),
-        )
-        self._raise_if_cancelled(session_id)
-
-        self._store.set_supabase_ora_id(session_id, selected_ora_id)
-        if supabase_available:
-            try:
-                update_payload_status(payload_id, "completed")
-            except Exception:
-                pass
-
-        self._store.transition_state(
-            session_id=session_id,
-            next_state=WorkflowState.ANALYSIS_DONE,
-            event_type="ANALYSIS_COMPLETE",
-            message="Phase C complete: retrieval + payload + KRA/ORA chaining persisted",
-        )
-        self._emit(session_id, "analysis_done", "completed")
-
-        elapsed_ms = int((time.time() - started) * 1000)
-        return {
-            "session_id": session_id,
-            "status": "COMPLETED",
-            "experience_level": experience_level,
-            "supabase_available": supabase_available,
-            "supabase_payload_id": payload_id,
-            "supabase_payload_url": payload_url,
-            "supabase_kra_id": kra_id,
-            "supabase_kra_url": kra_url,
-            "supabase_ora_id": selected_ora_id,
-            "supabase_ora_url": selected_ora_url,
-            "processing_steps": processing_steps,
-            "kra_raw": kra_result.get("raw_text", ""),
-            "ora_outputs": ora_outputs,
-            "ora_disclaimers": ora_disclaimers,
-            "refined_output": ora_outputs.get(selected_key) or ora_outputs.get("seasoned") or ora_outputs.get("newbie") or "",
-            "disclaimer": ora_disclaimers.get(selected_key) or ora_disclaimers.get("seasoned") or ora_disclaimers.get("newbie") or "",
-            "rare_case_alert": rare_alert.to_dict() if rare_alert.triggered else None,
-            "total_duration_ms": elapsed_ms,
-            "context_preview": context_text[:1200],
-        }
-
-    @staticmethod
-    def _to_float(value: Any) -> Optional[float]:
-        """Best-effort scalar parser used during payload normalization."""
-        try:
-            if value is None or value == "":
-                return None
-            return float(value)
-        except (TypeError, ValueError):
-            return None
-
     def _normalize_symptoms_payload(self, extraction_payload: dict[str, Any]) -> tuple[dict[str, Any], str]:
         """Convert extraction payload into canonical symptoms JSON + narrative text."""
         if not isinstance(extraction_payload, dict):
@@ -1280,3 +620,727 @@ class WorkflowService:
             "findings": findings,
             "raw": raw,
         }
+
+    def _run_analysis_pipeline(
+        self,
+        session_id: str,
+        experience_level: str,
+        extraction_payload: dict[str, Any],
+        ecg_payload: dict[str, Any],
+        lab_payload: dict[str, Any],
+        started: float,
+        patient_id: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Core pipeline: normalize -> retrieve -> KRA -> ORA -> persist -> return.
+
+        This is the orchestration center for the whole analysis flow. The
+        route layer in ``backend/routes/workflow.py`` only dispatches the HTTP
+        request here; from this point onward the workflow is responsible for
+        converting raw step payloads into normalized clinical text, passing the
+        search inputs to SearchService, and forwarding the final retrieval
+        context into KRA and ORA.
+        """
+        processing_steps: list[dict[str, Any]] = []
+        self._raise_if_cancelled(session_id)
+
+        # ── Step 0: Normalise inputs ──────────────────────────────────────────
+        # The normalized payload is the common shape consumed by three later
+        # stages: SearchService turns it into retrieval text, KRAClient sends it
+        # to the remote KRA model, and the persistence helpers store the same
+        # structured snapshot in Supabase for history reuse.
+
+        symptoms_json, symptoms_text = self._normalize_symptoms_payload(extraction_payload)
+        ecg_json = self._normalize_ecg_payload(ecg_payload)
+        labs_json = self._normalize_lab_payload(lab_payload)
+
+        ecg_findings: list[str] = ecg_json.get("findings", []) if ecg_json.get("status") == "present" else []
+        lab_findings: list[str] = labs_json.get("findings", []) if labs_json.get("status") == "present" else []
+        lab_values: dict[str, float] = {
+            marker: value
+            for marker, value in {
+                "troponin": labs_json.get("troponin"),
+                "ldh": labs_json.get("ldh"),
+                "bnp": labs_json.get("bnp"),
+                "creatinine": labs_json.get("creatinine"),
+                "hemoglobin": labs_json.get("hemoglobin"),
+            }.items()
+            if isinstance(value, (int, float))
+        }
+        self._emit(session_id, "session_init", "completed")
+
+        # ── Step 1: Textbook retrieval, then uncertainty-gated rare cases ───
+        # SearchService is called here because it owns the vector builder,
+        # textbook FAISS search, rare-case gate, and rare-case alert creation.
+        self._emit(session_id, "faiss_search", "started")
+        retrieval_started = time.time()
+        patient_vector, textbook_context, quality = self._search.search_textbook(
+            symptoms_text=symptoms_text,
+            top_k=5,
+            ecg_findings=ecg_findings,
+            lab_findings=lab_findings,
+            lab_values=lab_values,
+            age=None,  # Add appropriate value if available
+            sex=None,  # Add appropriate value if available
+            chief_complaint=None  # Add appropriate value if available
+        )
+
+        retrieval_ms = int((time.time() - retrieval_started) * 1000)
+        quality: dict[str, Any] = (
+            dict(quality) if isinstance(quality, dict) else {"status": "LOW_CONFIDENCE"}
+        )
+
+        processing_steps.append(
+            {
+                "step": "faiss_search",
+                "status": "success",
+                "duration_ms": retrieval_ms,
+                "rare_gate": quality.get("rare_search_gate"),
+            }
+        )
+        self._emit(session_id, "faiss_search", "completed", duration_ms=retrieval_ms)
+        self._raise_if_cancelled(session_id)
+
+        context_sections: list[str] = [textbook_context] if textbook_context else []
+        rare_context = ""
+        rare_alert = RareCaseAlert(
+            triggered=False,
+            reasoning="Rare-case search gated off by uncertainty policy",
+        )
+
+        rare_gate = self._search.should_search_rare_cases(
+            quality=quality,
+            ecg_findings=ecg_findings,
+            lab_findings=lab_findings,
+            lab_values=lab_values,
+        )
+
+        quality["rare_search_gate"] = rare_gate.get("reason")
+        quality.setdefault("rare_cases_searched", 0)
+        quality.setdefault("rare_top_score", 0.0)
+
+        # Persist the textbook retrieval context early so the history view can
+        # later show what evidence was available before KRA/ORA finished.
+        self._store.save_retrieval_context(
+            session_id=session_id,
+            source_type="books",
+            content=textbook_context,
+            metadata={
+                "quality": quality,
+                "experience_level": experience_level,
+                "rare_search_gate": rare_gate,
+            },
+        )
+
+        if rare_gate.get("trigger_rare_search"):
+            self._emit(session_id, "rare_case_search", "started")
+            rare_started = time.time()
+            # When the gate opens, SearchService performs a second retrieval on
+            # the rare-case index using the rare_query from UnifiedVectorBuilder
+            # and returns both context text and a structured RareCaseAlert.
+            rare_context, rare_quality, rare_alert = self._search.search_rare_cases(
+                patient_vector=patient_vector,
+                symptoms_text=symptoms_text,
+                ecg_findings=ecg_findings,
+                lab_findings=lab_findings,
+                lab_values=lab_values,
+                common_condition=str(quality.get("top_common_condition") or ""),
+            )
+            rare_ms = int((time.time() - rare_started) * 1000)
+            quality.update(rare_quality)
+            if rare_context:
+                context_sections.append(rare_context)
+                self._store.save_retrieval_context(
+                    session_id=session_id,
+                    source_type="rare_cases",
+                    content=rare_context,
+                    metadata={
+                        "rare_alert": rare_alert.to_dict(),
+                        "rare_search_gate": rare_gate,
+                        "rare_top_score": quality.get("rare_top_score"),
+                    },
+                    score=float(quality.get("rare_top_score", 0.0) or 0.0),
+                )
+            processing_steps.append(
+                {
+                    "step": "rare_case_search",
+                    "status": "success",
+                    "duration_ms": rare_ms,
+                    "triggered": bool(rare_alert.triggered),
+                    "top_score": float(quality.get("rare_top_score", 0.0) or 0.0),
+                }
+            )
+            self._emit(
+                session_id,
+                "rare_case_search",
+                "completed",
+                duration_ms=rare_ms,
+                triggered=bool(rare_alert.triggered),
+                top_score=float(quality.get("rare_top_score", 0.0) or 0.0),
+            )
+        else:
+            processing_steps.append(
+                {
+                    "step": "rare_case_search",
+                    "status": "skipped",
+                    "duration_ms": 0,
+                    "reason": rare_gate.get("reason"),
+                }
+            )
+            self._emit(
+                session_id,
+                "rare_case_search",
+                "completed",
+                duration_ms=0,
+                triggered=False,
+                skipped=True,
+                reason=rare_gate.get("reason"),
+            )
+        self._raise_if_cancelled(session_id)
+
+        context_text = "\n\n".join(section.strip() for section in context_sections if str(section).strip())
+
+        # ── Step 2 + 3: History fetch, payload save, and KRA run in parallel ──
+        # Saving the payload and fetching history do not depend on KRA output,
+        # so they are overlapped with KRA execution. The history bundle is fed
+        # into both the payload snapshot and the KRA prompt so that the model
+        # sees longitudinal context without blocking the retrieval stage.
+        cancel_event = self._get_or_create_cancel_event(session_id)
+        self._emit(session_id, "supabase_save_payload", "started")
+        self._emit(session_id, "kra_analysis", "started")
+
+        def run_history_fetch() -> dict[str, Any]:
+            """Step 2: Load longitudinal history summary for KRA (non-blocking).
+
+            WorkflowService is the only component that knows both the current
+            session and the patient history endpoint, so it fetches the summary
+            here and passes only the compact text downstream.
+            """
+            bundle: dict[str, Any] = {"patient_id": patient_id, "summary": {}, "records": []}
+            if patient_id:
+                try:
+                    bundle = get_patient_history_bundle(patient_id)
+                except Exception as exc:
+                    logger.warning("Patient history summary fetch failed for %s: %s", patient_id, exc)
+            return bundle
+
+        def run_payload_save(history_bundle_ref: list) -> dict[str, Any]:
+            """Worker: persist the normalized request snapshot and timing metadata.
+
+            The saved payload is the audit trail for this exact analysis run: it
+            stores the normalized symptoms, ECG, labs, and retrieval context so
+            the frontend history page can reconstruct the clinical session later.
+            """
+            started_at = time.time()
+
+            # Wait for history to be available from the shared ref
+
+            hb = history_bundle_ref[0] if history_bundle_ref else {"patient_id": patient_id, "summary": {}, "records": []}
+            compact_history = self._compact_history_bundle_for_payload(hb)
+            result = self._save_payload_snapshot(
+                session_id=session_id,
+                symptoms_json=symptoms_json,
+                ecg_json=ecg_json,
+                labs_json=labs_json,
+                context_text=context_text,
+                quality=quality,
+                history_json=compact_history,
+                patient_id=patient_id,
+            )
+            result["duration_ms"] = int((time.time() - started_at) * 1000)
+            return result
+
+        def run_kra_analysis(history_bundle_ref: list) -> dict[str, Any]:
+            """Worker: run KRA with retrieved context and optional history summary.
+
+            This is the handoff point from search to reasoning: the retrieval
+            context_text built from textbook/rare search is sent to KRA together
+            with the normalized ECG/lab payloads and the compact longitudinal
+            history summary.
+            """
+            started_at = time.time()
+
+            # Extract history summary text from the fetched bundle
+
+            hb = history_bundle_ref[0] if history_bundle_ref else {}
+            hs = hb.get("summary") or {} if isinstance(hb, dict) else {}
+            h_text = str(hs.get("summary_text") or "").strip()
+
+            result = self._kra.analyze(
+                symptoms_text=symptoms_text,
+                context_text=context_text,
+                ecg_dict=ecg_json,
+                labs_dict=labs_json,
+                history_summary_text=h_text,
+                cancel_event=cancel_event,
+            )
+            return {
+                "kra_result": result,
+                "duration_ms": int((time.time() - started_at) * 1000),
+                "history_injected": bool(h_text),
+            }
+
+        # Phase 1: Fetch history first (fast network call), then fire payload+KRA in parallel
+
+        with ThreadPoolExecutor(max_workers=3) as executor:
+
+            # Stage A: fetch history first so both downstream workers use same data.
+
+            history_future = executor.submit(run_history_fetch)
+
+            # Wait for history before starting payload save and KRA (they both need it)
+
+            try:
+                history_bundle = history_future.result(timeout=15)
+            except Exception as exc:
+                logger.warning("History fetch timed out or failed: %s", exc)
+                history_bundle = {"patient_id": patient_id, "summary": {}, "records": []}
+
+            history_summary = history_bundle.get("summary") or {} if isinstance(history_bundle, dict) else {}
+            history_summary_text = str(history_summary.get("summary_text") or "").strip()
+
+            # Shared ref so both workers see the same history
+
+            history_ref = [history_bundle]
+
+            payload_future = executor.submit(run_payload_save, history_ref)
+            kra_future = executor.submit(run_kra_analysis, history_ref)
+            done, pending = wait(
+                {payload_future, kra_future},
+                timeout=self._kra_timeout_seconds(),
+                return_when=FIRST_EXCEPTION,
+            )
+            if kra_future not in done:
+                cancel_event.set()
+                logger.error("KRA analysis timed out for session %s after %.1fs", session_id, self._kra_timeout_seconds())
+                raise RuntimeError("KRA_TIMEOUT")
+            first_error = next((future.exception() for future in done if future.exception() is not None), None)
+            if first_error is not None:
+                cancel_event.set()
+                for future in pending:
+                    future.cancel()
+                raise first_error
+            payload_result = payload_future.result()
+            self._raise_if_cancelled(session_id)
+            kra_run = kra_future.result()
+
+        payload_id = payload_result["payload_id"]
+        payload_url = payload_result.get("payload_url")
+        supabase_available = bool(payload_result.get("supabase_available"))
+        payload_ms = int(payload_result.get("duration_ms") or 0)
+        kra_result = kra_run["kra_result"]
+        kra_ms = int(kra_run.get("duration_ms") or 0)
+
+        logger.info(
+            "KRA output for session %s\n%s\n%s",
+            session_id,
+            "=" * 80,
+            str(kra_result.get("raw_text") or "[empty KRA output]"),
+        )
+        if not self._is_valid_kra_result(kra_result):
+            logger.error(
+                "KRA produced invalid output for session %s; aborting before ORA. Raw output:\n%s",
+                session_id,
+                str(kra_result.get("raw_text") or "[empty KRA output]"),
+            )
+            raise RuntimeError("KRA_OUTPUT_INVALID_JSON")
+
+        processing_steps.append(
+            {
+                "step": "supabase_save_payload",
+                "status": "success" if supabase_available else "offline_fallback",
+                "duration_ms": payload_ms,
+                "supabase_id": payload_id,
+                "supabase_available": supabase_available,
+            }
+        )
+        processing_steps.append(
+            {
+                "step": "kra_analysis",
+                "status": "success",
+                "duration_ms": kra_ms,
+                "history_injected": bool(history_summary_text),
+            }
+        )
+        self._emit(
+            session_id,
+            "supabase_save_payload",
+            "completed",
+            duration_ms=payload_ms,
+            supabase_available=supabase_available,
+        )
+        self._emit(
+            session_id,
+            "kra_analysis",
+            "completed",
+            duration_ms=kra_ms,
+            history_injected=bool(history_summary_text),
+        )
+        self._raise_if_cancelled(session_id)
+
+        # ── Step 4: Persist KRA and run ORA outputs (NEWBIE + SEASONED) ─────
+        # ORA only needs KRA output, so we run both experience levels once and
+        # return both variants to the frontend toggle. The same KRA input blob
+        # is passed to ORAClient, which builds the prompt and sanitizes output.
+
+        kra_input_package = {
+            "session_id": session_id,
+            "symptoms_text": symptoms_text,
+            "context_text": context_text,
+            "ecg": ecg_json,
+            "labs": labs_json,
+            "history_summary_text": history_summary_text,
+            "quality": quality,
+        }
+
+        requested_level = str(experience_level or "seasoned").strip().upper()
+        if requested_level not in {"NEWBIE", "SEASONED"}:
+            requested_level = "SEASONED"
+
+        self._emit(session_id, "supabase_save_kra", "started")
+        self._emit(session_id, "ora_refinement", "started")
+
+        def run_kra_persist() -> dict[str, Any]:
+            """Worker: persist KRA output while ORA refinement executes in parallel."""
+            started_at = time.time()
+            if not supabase_available:
+                return {
+                    "kra_id": str(uuid.uuid4()),
+                    "kra_url": None,
+                    "supabase_available": False,
+                    "error": "PAYLOAD_SAVE_UNAVAILABLE",
+                    "duration_ms": int((time.time() - started_at) * 1000),
+                }
+            result = self._save_kra_history_entry(
+                session_id=session_id,
+                payload_id=payload_id,
+                symptoms_text=symptoms_text,
+                kra_result=kra_result,
+                patient_id=patient_id,
+            )
+            result["duration_ms"] = int((time.time() - started_at) * 1000)
+            return result
+
+        def run_ora_refinement(level: str) -> dict[str, Any]:
+            """Worker: produce one ORA variant for a specific experience level.
+
+            ORAClient receives the KRA result plus the retrieval context that was
+            assembled above, then emits the final human-readable clinical report.
+            """
+            started_at = time.time()
+            result = self._ora.refine(
+                kra_input=kra_input_package,
+                kra_result=kra_result,
+                symptoms_text=symptoms_text,
+                experience_level=level,
+                cancel_event=cancel_event,
+            )
+            return {
+                "level": level,
+                "ora_result": result,
+                "duration_ms": int((time.time() - started_at) * 1000),
+            }
+
+        ora_levels = ["NEWBIE", "SEASONED"]
+        selected_key = requested_level.lower()
+        if selected_key not in {"newbie", "seasoned"}:
+            selected_key = "seasoned"
+        ora_runs: dict[str, dict[str, Any]] = {}
+        ora_failures: dict[str, str] = {}
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+
+            # Stage B: run KRA persistence + dual ORA variants concurrently.
+
+            kra_save_future = executor.submit(run_kra_persist)
+            ora_futures = {
+                level: executor.submit(run_ora_refinement, level)
+                for level in ora_levels
+            }
+            primary_future = ora_futures[selected_key.upper()]
+            required_futures = {kra_save_future, primary_future}
+            done_required, pending_required = wait(
+                required_futures,
+                timeout=self._ora_timeout_seconds(),
+                return_when=FIRST_EXCEPTION,
+            )
+
+            if primary_future not in done_required:
+                cancel_event.set()
+                logger.error("ORA refinement timed out for session %s after %.1fs", session_id, self._ora_timeout_seconds())
+                for future in ora_futures.values():
+                    future.cancel()
+                raise RuntimeError("ORA_TIMEOUT")
+
+            kra_error = kra_save_future.exception() if kra_save_future in done_required else None
+            primary_error = primary_future.exception() if primary_future in done_required else None
+            if kra_error is not None or primary_error is not None:
+                cancel_event.set()
+                for future in ora_futures.values():
+                    future.cancel()
+                raise kra_error or primary_error
+
+            secondary_futures = {
+                level: future
+                for level, future in ora_futures.items()
+                if future is not primary_future
+            }
+            secondary_done = set()
+            if secondary_futures:
+                secondary_done, _ = wait(
+                    set(secondary_futures.values()),
+                    timeout=self._ora_secondary_timeout_seconds(),
+                )
+
+            for level, future in ora_futures.items():
+                level_key = level.lower()
+                if future in done_required or future in secondary_done:
+                    try:
+                        ora_runs[level_key] = future.result()
+                    except Exception as exc:
+                        ora_failures[level_key] = str(exc)
+                else:
+
+                    # Secondary mode may exceed timeout; keep pipeline alive and
+                    # synthesize fallback from available mode below.
+
+                    future.cancel()
+                    ora_failures[level_key] = "ORA_TIMEOUT"
+
+            kra_save_result = kra_save_future.result()
+            self._raise_if_cancelled(session_id)
+
+            # Keep diagnosis flow resilient: primary ORA must exist, secondary
+            # mode is best-effort with deterministic fallback synthesis.
+
+            if selected_key not in ora_runs:
+                selected_err = ora_failures.get(selected_key) or "ORA_OUTPUT_EMPTY"
+                raise RuntimeError(selected_err)
+
+            # Ensure both experience-level outputs are always available so
+            # frontend toggles can switch between two concrete variants.
+
+            required_levels = ("newbie", "seasoned")
+            for missing_level in required_levels:
+                if missing_level in ora_runs:
+                    continue
+                source_level = "seasoned" if missing_level == "newbie" else "newbie"
+                source_payload = ora_runs.get(source_level)
+                if source_payload is None:
+                    continue
+
+                source_result = dict(source_payload.get("ora_result") or {})
+                source_text = str(source_result.get("refined_output") or "").strip()
+                source_disclaimer = str(source_result.get("disclaimer") or "").strip()
+                if not source_text:
+                    continue
+
+                # If only one ORA branch completed, keep the workflow alive by
+                # synthesizing the missing mode from the available report so the UI
+                # still has a toggleable result to show.
+
+                label = "Newbie" if missing_level == "newbie" else "Seasoned"
+                fallback_text = (
+                    f"### {label} Output (Fallback)\n\n"
+                    "The dedicated ORA pass for this mode was unavailable in this run; "
+                    "showing the alternate mode output below.\n\n"
+                    f"{source_text}"
+                )
+                ora_runs[missing_level] = {
+                    "level": missing_level.upper(),
+                    "ora_result": {
+                        "refined_output": fallback_text,
+                        "disclaimer": source_disclaimer,
+                        "status": "partial_fallback",
+                    },
+                    "duration_ms": int(source_payload.get("duration_ms") or 0),
+                }
+
+            if ora_failures:
+                logger.warning("ORA secondary output failure(s) for session %s: %s", session_id, ora_failures)
+
+        kra_id = kra_save_result["kra_id"]
+        kra_url = kra_save_result.get("kra_url")
+        kra_save_ms = int(kra_save_result.get("duration_ms") or 0)
+        ora_outputs: dict[str, str] = {}
+        ora_disclaimers: dict[str, str] = {}
+        for level_key, payload in ora_runs.items():
+            ora_result = payload["ora_result"]
+            ora_outputs[level_key] = str(ora_result.get("refined_output") or "")
+            ora_disclaimers[level_key] = str(ora_result.get("disclaimer") or "")
+
+        # Best-effort: persist ORA outputs onto the payload row as well.
+        # This keeps history usable even if the separate ora_outputs inserts
+        # intermittently fail (network timeouts, transient Supabase issues).
+
+        if payload_url:
+            try:
+                enriched_quality = dict(quality or {})
+                enriched_quality["ora_outputs"] = dict(ora_outputs)
+                enriched_quality["ora_disclaimers"] = dict(ora_disclaimers)
+                update_analysis_payload(
+                    payload_id,
+                    {"quality_json": enriched_quality},
+                    timeout=60,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to enrich analysis_payloads.quality_json with ORA outputs for payload %s: %s",
+                    payload_id,
+                    exc,
+                )
+
+        selected_ora_result = ora_runs[selected_key]["ora_result"]
+        ora_ms = int(ora_runs[selected_key].get("duration_ms") or 0)
+        supabase_available = supabase_available and bool(kra_save_result.get("supabase_available"))
+
+        logger.info(
+            "ORA output for session %s\n%s\n%s",
+            session_id,
+            "=" * 80,
+            str(selected_ora_result.get("refined_output") or "[empty ORA output]"),
+        )
+
+        processing_steps.append(
+            {
+                "step": "supabase_save_kra",
+                "status": "success" if kra_save_result.get("supabase_available") else "offline_fallback",
+                "duration_ms": kra_save_ms,
+                "supabase_id": kra_id,
+            }
+        )
+        processing_steps.append(
+            {
+                "step": "ora_refinement",
+                "status": selected_ora_result.get("status", "success"),
+                "duration_ms": ora_ms,
+                "experience_level": requested_level.lower(),
+                "available_levels": sorted(list(ora_outputs.keys())),
+            }
+        )
+        self._emit(
+            session_id,
+            "supabase_save_kra",
+            "completed",
+            duration_ms=kra_save_ms,
+            supabase_available=bool(kra_save_result.get("supabase_available")),
+        )
+        self._emit(
+            session_id,
+            "ora_refinement",
+            "completed",
+            duration_ms=ora_ms,
+            experience_level=requested_level.lower(),
+            available_levels=sorted(list(ora_outputs.keys())),
+        )
+        self._raise_if_cancelled(session_id)
+
+        # ── Step 5: Persist available ORA history entries ────────────────────
+        
+        self._emit(session_id, "supabase_save_ora", "started")
+        ora_save_started = time.time()
+        ora_save_results: dict[str, dict[str, Any]] = {}
+        for level_key, payload in ora_runs.items():
+            if not supabase_available:
+                ora_save_results[level_key] = {
+                    "ora_id": str(uuid.uuid4()),
+                    "ora_url": None,
+                    "supabase_available": False,
+                    "error": "PAYLOAD_SAVE_UNAVAILABLE",
+                }
+                continue
+            try:
+                ora_save_results[level_key] = self._save_ora_history_entry(
+                    session_id=session_id,
+                    kra_output_id=kra_id,
+                    experience_level=level_key.upper(),
+                    ora_result=payload["ora_result"],
+                    patient_id=patient_id,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "ORA history persistence failed for %s/%s: %s",
+                    session_id,
+                    level_key,
+                    exc,
+                )
+                ora_save_results[level_key] = {
+                    "ora_id": str(uuid.uuid4()),
+                    "ora_url": None,
+                    "supabase_available": False,
+                    "error": str(exc),
+                }
+        ora_save_ms = int((time.time() - ora_save_started) * 1000)
+        selected_ora_save = ora_save_results.get(selected_key, {})
+        selected_ora_id = selected_ora_save.get("ora_id") or ""
+        selected_ora_url = selected_ora_save.get("ora_url")
+        supabase_available = supabase_available and all(
+            bool(item.get("supabase_available"))
+            for item in ora_save_results.values()
+        )
+
+        processing_steps.append(
+            {
+                "step": "supabase_save_ora",
+                "status": "success" if all(bool(item.get("supabase_available")) for item in ora_save_results.values()) else "offline_fallback",
+                "duration_ms": ora_save_ms,
+                "supabase_id": selected_ora_id,
+                "saved_levels": sorted(list(ora_save_results.keys())),
+            }
+        )
+        self._emit(
+            session_id,
+            "supabase_save_ora",
+            "completed",
+            duration_ms=ora_save_ms,
+            supabase_available=all(bool(item.get("supabase_available")) for item in ora_save_results.values()),
+            saved_levels=sorted(list(ora_save_results.keys())),
+        )
+        self._raise_if_cancelled(session_id)
+
+        self._store.set_supabase_ora_id(session_id, selected_ora_id)
+        if supabase_available:
+            try:
+                update_payload_status(payload_id, "completed")
+            except Exception:
+                pass
+
+        self._store.transition_state(
+            session_id=session_id,
+            next_state=WorkflowState.ANALYSIS_DONE,
+            event_type="ANALYSIS_COMPLETE",
+            message="Phase C complete: retrieval + payload + KRA/ORA chaining persisted",
+        )
+        self._emit(session_id, "analysis_done", "completed")
+
+        elapsed_ms = int((time.time() - started) * 1000)
+        return {
+            "session_id": session_id,
+            "status": "COMPLETED",
+            "experience_level": experience_level,
+            "supabase_available": supabase_available,
+            "supabase_payload_id": payload_id,
+            "supabase_payload_url": payload_url,
+            "supabase_kra_id": kra_id,
+            "supabase_kra_url": kra_url,
+            "supabase_ora_id": selected_ora_id,
+            "supabase_ora_url": selected_ora_url,
+            "processing_steps": processing_steps,
+            "kra_raw": kra_result.get("raw_text", ""),
+            "ora_outputs": ora_outputs,
+            "ora_disclaimers": ora_disclaimers,
+            "refined_output": ora_outputs.get(selected_key) or ora_outputs.get("seasoned") or ora_outputs.get("newbie") or "",
+            "disclaimer": ora_disclaimers.get(selected_key) or ora_disclaimers.get("seasoned") or ora_disclaimers.get("newbie") or "",
+            "rare_case_alert": rare_alert.to_dict() if rare_alert.triggered else None,
+            "total_duration_ms": elapsed_ms,
+            "context_preview": context_text[:1200],
+        }
+
+    @staticmethod
+    def _to_float(value: Any) -> Optional[float]:
+        """Best-effort scalar parser used during payload normalization."""
+        try:
+            if value is None or value == "":
+                return None
+            return float(value)
+        except (TypeError, ValueError):
+            return None

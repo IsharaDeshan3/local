@@ -80,3 +80,7 @@ analysis_flow/tmp_hf_spaces/
 **/.DS_Store
 **/Thumbs.db
 **/desktop.ini
+analysis_flow/docs/common_pitfalls_and_viva_questions_cheatsheet.md
+analysis_flow/docs/full_analysis_backend_flow_cheatsheet.md
+analysis_flow/docs/search_service_cheatsheet.md
+heartsense_website_analysis.md

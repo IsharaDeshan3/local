@@ -36,16 +36,55 @@ def _summarize_mapping(value: Dict[str, Any], *, max_parts: int = 6) -> str:
     if not isinstance(value, dict):
         return _coerce_text(value)
 
+    # Prefer a single primary clinical label over raw key/value dumps.
+    primary = (
+        value.get("differential")
+        or value.get("condition")
+        or value.get("diagnosis")
+        or value.get("name")
+        or value.get("test_name")
+        or value.get("test")
+    )
+    primary_text = _coerce_text(primary, max_chars=180)
+
+    if primary_text:
+        parts_primary: list[str] = [primary_text]
+        confidence = value.get("confidence") or value.get("probability")
+        if confidence not in (None, ""):
+            conf_text = _coerce_text(confidence, max_chars=40)
+            try:
+                pct = float(str(confidence))
+                if pct <= 1:
+                    conf_text = f"{pct * 100:.0f}%"
+            except Exception:
+                pass
+            parts_primary.append(f"confidence={conf_text}")
+
+        severity = value.get("severity")
+        if severity not in (None, ""):
+            parts_primary.append(f"severity={_coerce_text(severity, max_chars=40)}")
+
+        decisive = value.get("decisiveFinding") or value.get("decisive_finding")
+        if decisive not in (None, ""):
+            parts_primary.append(f"clue={_coerce_text(decisive, max_chars=140)}")
+
+        return " | ".join(parts_primary[:max_parts])
+
     parts: list[str] = []
     preferred_keys = (
         "condition",
+        "differential",
         "type",
         "name",
         "diagnosis",
+        "test_name",
+        "test",
         "summary",
         "severity",
         "confidence",
         "probability",
+        "decisiveFinding",
+        "decisive_finding",
         "evidence",
         "clinical_features",
         "description",
@@ -258,7 +297,7 @@ def _compact_list(value: Any, *, max_items: int = 8, max_chars: int = 180) -> li
     if isinstance(value, list):
         source = value
     elif isinstance(value, dict):
-        source = [f"{k}: {v}" for k, v in value.items()]
+        source = [value]
     elif value is None:
         source = []
     else:
@@ -332,6 +371,11 @@ def _compact_kra_input_for_prompt(kra_input: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(kra_input, dict):
         kra_input = {}
 
+    # WorkflowService builds the kra_input package from the retrieval context,
+    # normalized symptoms, ECG, labs, and longitudinal history. This helper is
+    # the final compression step before that material is embedded into the ORA
+    # prompt, so it strips the payload down to the pieces the model actually
+    # needs to reason over.
     symptoms = str(kra_input.get("symptoms_text") or "").strip()
     context = str(kra_input.get("context_text") or "").strip()
     history_summary = str(kra_input.get("history_summary_text") or "").strip()
@@ -401,6 +445,10 @@ def build_ora_prompt(
     symptoms_text: str,
     experience_level: str,
 ) -> str:
+    # ORAClient calls this after KRA has already finished. The prompt builder
+    # receives the compact KRA input created above plus the compact KRA result,
+    # and turns them into the final Gemini prompt for the selected experience
+    # level.
     level = experience_level.upper()
     instructions = _LEVEL_MAP.get(level, _SEASONED_INSTRUCTIONS)
     required_headings = (
