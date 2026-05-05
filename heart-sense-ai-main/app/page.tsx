@@ -139,7 +139,7 @@ const DOMAIN_GAP = [
   "Noisy, incomplete, or low-resource inputs are not always normalised before reasoning starts.",
 ];
 
-const teamPhoto = (fileName: string) => `/api/images/${fileName}`;
+const teamPhoto = (fileName: string) => `/${fileName}`;
 
 const DOMAIN_OBJECTIVES = [
   "Preserve consultation meaning when converting Sinhala interactions into structured clinical context.",
