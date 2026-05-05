@@ -6,10 +6,15 @@ import { motion, useInView, useScroll, useTransform } from "framer-motion";
 import {
   HeartPulse,
   ArrowRight,
+  ExternalLink,
   Microscope,
   Activity,
   FlaskConical,
   BookOpenText,
+  Users,
+  Mail,
+  Phone,
+  Workflow,
   ChevronRight,
 } from "lucide-react";
 
@@ -109,6 +114,217 @@ const MODULES = [
   },
 ];
 
+const DOMAIN_SURVEY = [
+  {
+    title: "Single-modality cardiac AI",
+    body: "Most prior systems focus on one signal at a time, such as ECG or imaging, which makes it difficult to preserve consultation context and turn it into one clinical view.",
+  },
+  {
+    title: "Bilingual clinical transcription",
+    body: "Manual Sinhala-to-structured-note conversion can lose clinical nuance, especially when symptoms, medication history, and timing details are compressed into shorthand.",
+  },
+  {
+    title: "Explainability in triage",
+    body: "Clinicians need evidence-linked recommendations rather than opaque scores, especially when a decision must be defended, audited, or handed over.",
+  },
+  {
+    title: "Rare-case support",
+    body: "Low-frequency but critical cases benefit from retrieval-backed memory so that the system can surface verified examples instead of relying only on pattern recognition.",
+  },
+];
+
+const DOMAIN_GAP = [
+  "No single workflow currently joins Sinhala consultation context, ECG interpretation, laboratory reasoning, and evidence retrieval.",
+  "Existing tools are fragmented across separate analysis surfaces and do not consistently preserve clinician-ready explanations.",
+  "Noisy, incomplete, or low-resource inputs are not always normalised before reasoning starts.",
+];
+
+const teamPhoto = (fileName: string) => `/api/images/${fileName}`;
+
+const DOMAIN_OBJECTIVES = [
+  "Preserve consultation meaning when converting Sinhala interactions into structured clinical context.",
+  "Interpret ECG signals from imperfect real-world input and surface clinician-friendly findings.",
+  "Reason over laboratory data with urgency-aware recommendations.",
+  "Ground final recommendations in retrievable evidence and rare-case references.",
+];
+
+const METHODOLOGY = [
+  {
+    step: "01",
+    title: "Sinhala Consultation NLP",
+    body: "Capture clinician-patient dialogue and convert it into structured symptoms, history, and context.",
+  },
+  {
+    step: "02",
+    title: "ECG Intake and Interpretation",
+    body: "Transform a captured ECG image or signal into usable rhythm, waveform, and warning-sign insight.",
+  },
+  {
+    step: "03",
+    title: "Laboratory Reasoning",
+    body: "Compare lab values against the patient record and highlight trends, risk flags, and missing context.",
+  },
+  {
+    step: "04",
+    title: "Evidence Retrieval",
+    body: "Search FAISS-backed knowledge and rare-case references to support the reasoning step.",
+  },
+  {
+    step: "05",
+    title: "Clinician Output",
+    body: "Render the final assessment as an explainable recommendation that can be reviewed or handed over.",
+  },
+];
+
+const TECHNOLOGIES = [
+  {
+    name: "Next.js 16 + React 19",
+    body: "App Router landing experience and protected clinical workspace.",
+  },
+  {
+    name: "TypeScript + Tailwind CSS v4",
+    body: "Typed UI logic and utility styling across the portal.",
+  },
+  {
+    name: "Framer Motion",
+    body: "Hero motion, fade-up transitions, and section reveals.",
+  },
+  {
+    name: "MongoDB + Mongoose",
+    body: "Persistence for users, patients, and access requests.",
+  },
+  {
+    name: "Google Generative AI",
+    body: "LLM-assisted analysis and reasoning support.",
+  },
+  {
+    name: "FAISS",
+    body: "Textbook knowledge and rare-case retrieval.",
+  },
+  {
+    name: "Python + FastAPI services",
+    body: "Workflow orchestration and analysis services.",
+  },
+  {
+    name: "shadcn / Radix UI",
+    body: "Accessible controls, dialogs, and form primitives.",
+  },
+  {
+    name: "uPlot + simple-peer + JWT",
+    body: "Signal charts, call support, and secure sessions.",
+  },
+];
+
+const MILESTONES = [
+  { name: "Project Proposal", date: "2025.05.30", marks: "TBD" },
+  { name: "Progress Presentation 1", date: "2025.11.26", marks: "TBD" },
+  { name: "Progress Presentation 2", date: "2026.03.16", marks: "TBD" },
+  { name: "Final Presentation", date: "2026.05.06", marks: "TBD" },
+  { name: "Viva", date: "2026.05.06", marks: "TBD" },
+];
+
+const DOCUMENTS = [
+  {
+    title: "Project Charter",
+    note: "Unavailable in the shared files.",
+    href: null,
+  },
+  {
+    title: "Proposal Document",
+    note: "Google Drive copy.",
+    href: "https://drive.google.com/file/d/1VzfkFDtf-T5FPFcdayrkd3awvglmBHZU/view?usp=sharing",
+  },
+  {
+    title: "Status 1",
+    note: "Progress Presentation 1 deck.",
+    href: "https://docs.google.com/presentation/d/1k4TaxN5VghbH58IyCuWOYsJ5ErMtbAqTOjCm0Bq0fTg/edit?usp=sharing",
+  },
+  {
+    title: "Status 2",
+    note: "Progress Presentation 2 deck.",
+    href: "https://docs.google.com/presentation/d/18vvbiq9bqxcre85XJsWibDh8YgahxRc3TUxfXeT4DK0/edit?usp=sharing",
+  },
+  {
+    title: "Research Paper",
+    note: "Final paper PDF.",
+    href: "https://drive.google.com/file/d/1-qDTq-3dR6GrnNaGXX8qaKCqQrENt75e/view?usp=sharing",
+  },
+  {
+    title: "Final Presentation",
+    note: "Final presentation deck.",
+    href: "https://docs.google.com/presentation/d/1TRy8_lddBBulQjqQ8i-smAG17NiO8AqKo_j1djHjB48/edit?usp=sharing",
+  },
+  {
+    title: "Final Report",
+    note: "Not shared yet.",
+    href: null,
+  },
+  {
+    title: "Checklists",
+    note: "Not shared yet.",
+    href: null,
+  },
+];
+
+const TEAM_MEMBERS = [
+  {
+    name: "S D I Deshan Sandanayake",
+    email: "idsdk847@gmail.com",
+    phone: "+94 71 47 23 538",
+    avatar: "SD",
+    role: "Research member",
+    photo: teamPhoto("S D I Deshan Sandanayake.jpg"),
+    note: "Member profile and research component will be updated if needed.",
+  },
+  {
+    name: "H M K Prabhath Wimalasena",
+    email: "kanch.prabath@gmail.com",
+    phone: "+94 77 924 5198",
+    avatar: "PW",
+    role: "Research member",
+    photo: teamPhoto("H M K Prabhath Wimalasena.jpeg"),
+    note: "Member profile and research component will be updated if needed.",
+  },
+  {
+    name: "I M R Kawya De Ranasinghe",
+    email: "ridmikranasinghe@gmail.com",
+    phone: "+94 76 068 0335",
+    avatar: "KR",
+    role: "Research member",
+    photo: teamPhoto("I M R Kawya De Ranasinghe.jpeg"),
+    note: "Member profile and research component will be updated if needed.",
+  },
+  {
+    name: "H A H Vishwajith Gunathilake",
+    email: "",
+    phone: "+94 76 658 3229",
+    avatar: "HG",
+    role: "Research member",
+    photo: teamPhoto("H A H Vishwajith Gunathilake.jpg"),
+    note: "Member profile and research component will be updated if needed.",
+  },
+];
+
+const SUPERVISORS = [
+  {
+    role: "Supervisor",
+    name: "Jagath Wickramarathne",
+    email: "jagath.w@sliit.lk",
+    title:
+      "Senior Lecturer - Faculty of Computing, Department of Software Engineering, SLIIT",
+  },
+  {
+    role: "Co-Supervisor",
+    name: "Madusha Weerasooriya",
+    email: "madusha.w@sliit.lk",
+    title:
+      "Assistant Lecturer - Faculty of Computing, Department of Software Engineering, SLIIT",
+  },
+];
+
+const PUBLIC_CONTACT_EMAIL = "idsdk847@gmail.com";
+const PUBLIC_CONTACT_PHONE = "075 058 3003";
+
 /* ─────────────── page ─────────────── */
 export default function Home() {
   const heroRef = useRef(null);
@@ -117,6 +333,26 @@ export default function Home() {
     offset: ["start start", "end start"],
   });
   const heroParallax = useTransform(scrollYProgress, [0, 1], ["0%", "18%"]);
+
+  const handleContactSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    const name = String(formData.get("name") ?? "").trim();
+    const email = String(formData.get("email") ?? "").trim();
+    const subject = String(formData.get("subject") ?? "HeartSense AI enquiry").trim();
+    const message = String(formData.get("message") ?? "").trim();
+
+    const body = [
+      name ? `Name: ${name}` : null,
+      email ? `Email: ${email}` : null,
+      "",
+      message || "",
+    ]
+      .filter((line) => line !== null)
+      .join("\n");
+
+    window.location.href = `mailto:${PUBLIC_CONTACT_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  };
 
   /* smooth anchor */
   useEffect(() => {
@@ -855,6 +1091,465 @@ export default function Home() {
           flex: 1;
         }
 
+        /* shared research sections */
+        .site-section {
+          padding: 7rem 2.5rem;
+          scroll-margin-top: 88px;
+        }
+        .site-section-alt {
+          background: var(--parchment2);
+          border-top: 1px solid var(--rule);
+          border-bottom: 1px solid var(--rule);
+        }
+        .section-inner {
+          max-width: 1160px;
+          margin: 0 auto;
+        }
+        .section-head {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-end;
+          gap: 1.5rem;
+          flex-wrap: wrap;
+          margin-bottom: 2.75rem;
+        }
+        .section-copy {
+          max-width: 660px;
+          font-size: 15px;
+          line-height: 1.75;
+          color: var(--ink-2);
+          font-weight: 300;
+        }
+        .section-grid {
+          display: grid;
+          gap: 1rem;
+        }
+        .section-grid.two-col {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+        .section-grid.three-col {
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+        .card-shell {
+          background: var(--parchment);
+          border: 1px solid var(--rule);
+          border-radius: var(--r-lg);
+          padding: 1.6rem;
+          box-shadow: 0 16px 48px rgba(24, 24, 26, 0.04);
+        }
+        .card-shell.soft {
+          background: var(--parchment2);
+        }
+        .card-kicker {
+          font-family: var(--mono);
+          font-size: 10.5px;
+          color: var(--accent);
+          letter-spacing: 0.14em;
+          text-transform: uppercase;
+          margin-bottom: 0.8rem;
+        }
+        .card-title {
+          font-family: var(--serif);
+          font-size: 1.25rem;
+          font-weight: 500;
+          line-height: 1.3;
+          margin-bottom: 0.55rem;
+        }
+        .card-body {
+          font-size: 13.5px;
+          line-height: 1.72;
+          color: var(--ink-2);
+          font-weight: 300;
+        }
+        .pill-row {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 0.5rem;
+          margin-top: 1rem;
+        }
+        .pill {
+          font-family: var(--mono);
+          font-size: 11px;
+          padding: 4px 10px;
+          border-radius: 5px;
+          border: 1px solid var(--rule);
+          background: var(--parchment2);
+          color: var(--ink-2);
+          text-transform: uppercase;
+          letter-spacing: 0.07em;
+        }
+        .pill strong {
+          color: var(--accent);
+          font-weight: 500;
+        }
+
+        .domain-grid {
+          display: grid;
+          grid-template-columns: 1.08fr 0.92fr;
+          gap: 1rem;
+          align-items: start;
+          margin-bottom: 1rem;
+        }
+        .survey-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 1rem;
+        }
+        .mini-card {
+          padding: 1.25rem;
+          background: var(--parchment2);
+          border: 1px solid var(--rule);
+          border-radius: var(--r);
+        }
+        .mini-card h4 {
+          font-family: var(--serif);
+          font-size: 1.05rem;
+          font-weight: 500;
+          margin-bottom: 0.45rem;
+          line-height: 1.35;
+        }
+        .mini-card p {
+          font-size: 13px;
+          line-height: 1.68;
+          color: var(--ink-2);
+          font-weight: 300;
+        }
+        .bullet-list {
+          display: grid;
+          gap: 0.75rem;
+          margin-top: 0.25rem;
+        }
+        .bullet-item {
+          display: flex;
+          gap: 0.7rem;
+          align-items: flex-start;
+          padding: 0.9rem 1rem;
+          background: var(--parchment2);
+          border: 1px solid var(--rule);
+          border-radius: var(--r);
+          color: var(--ink-2);
+          font-size: 13.5px;
+          line-height: 1.65;
+          font-weight: 300;
+        }
+        .bullet-index {
+          font-family: var(--mono);
+          color: var(--accent);
+          font-size: 11px;
+          letter-spacing: 0.12em;
+          text-transform: uppercase;
+          margin-top: 1px;
+          flex-shrink: 0;
+        }
+        .method-flow {
+          display: grid;
+          gap: 0.8rem;
+        }
+        .flow-step {
+          background: var(--parchment2);
+          border: 1px solid var(--rule);
+          border-radius: var(--r-lg);
+          padding: 1.25rem;
+        }
+        .flow-step h4 {
+          font-family: var(--serif);
+          font-size: 1.08rem;
+          font-weight: 500;
+          margin-bottom: 0.45rem;
+        }
+        .flow-step p {
+          font-size: 13px;
+          line-height: 1.7;
+          color: var(--ink-2);
+          font-weight: 300;
+        }
+        .tech-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 1rem;
+        }
+        .tech-item {
+          padding: 1.05rem 1.1rem;
+          background: var(--parchment2);
+          border: 1px solid var(--rule);
+          border-radius: var(--r);
+        }
+        .tech-item h4 {
+          font-family: var(--serif);
+          font-size: 1.05rem;
+          font-weight: 500;
+          margin-bottom: 0.35rem;
+          line-height: 1.35;
+        }
+        .tech-item p {
+          font-size: 13px;
+          line-height: 1.68;
+          color: var(--ink-2);
+          font-weight: 300;
+        }
+        .milestone-list {
+          display: grid;
+          gap: 0.8rem;
+        }
+        .milestone-row {
+          display: grid;
+          grid-template-columns: 1.25fr 0.62fr 0.55fr;
+          gap: 1rem;
+          align-items: center;
+          padding: 1rem 1.1rem;
+          background: var(--parchment2);
+          border: 1px solid var(--rule);
+          border-radius: var(--r);
+        }
+        .milestone-name {
+          font-family: var(--serif);
+          font-size: 1.05rem;
+          font-weight: 500;
+        }
+        .milestone-date,
+        .milestone-mark {
+          font-family: var(--mono);
+          font-size: 11px;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+          color: var(--ink-2);
+        }
+        .milestone-mark {
+          color: var(--accent);
+          text-align: right;
+        }
+        .resource-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 1rem;
+        }
+        .resource-card {
+          background: var(--parchment2);
+          border: 1px solid var(--rule);
+          border-radius: var(--r-lg);
+          padding: 1.5rem;
+          display: flex;
+          flex-direction: column;
+          gap: 0.9rem;
+        }
+        .resource-head {
+          display: flex;
+          justify-content: space-between;
+          gap: 1rem;
+          align-items: flex-start;
+        }
+        .resource-title {
+          font-family: var(--serif);
+          font-size: 1.1rem;
+          font-weight: 500;
+          line-height: 1.35;
+        }
+        .resource-note {
+          font-size: 12px;
+          line-height: 1.55;
+          color: var(--ink-2);
+          font-weight: 300;
+        }
+        .resource-link {
+          display: inline-flex;
+          align-items: center;
+          gap: 0.45rem;
+          align-self: flex-start;
+          text-decoration: none;
+          color: var(--ink);
+          padding: 0.8rem 1rem;
+          border: 1px solid var(--rule);
+          border-radius: 9px;
+          background: var(--parchment);
+          font-size: 13px;
+          font-weight: 500;
+          transition:
+            transform 0.15s,
+            opacity 0.2s,
+            border-color 0.2s;
+        }
+        .resource-link:hover {
+          transform: translateY(-2px);
+          border-color: rgba(31, 78, 140, 0.2);
+        }
+        .resource-link.disabled {
+          pointer-events: none;
+          opacity: 0.55;
+        }
+        .team-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 1rem;
+        }
+        .team-card {
+          display: grid;
+          grid-template-columns: 112px 1fr;
+          gap: 1rem;
+          align-items: start;
+          background: var(--parchment2);
+          border: 1px solid var(--rule);
+          border-radius: var(--r-lg);
+          padding: 1.25rem;
+        }
+        .team-avatar {
+          width: 112px;
+          height: 112px;
+          border-radius: 20px;
+          background: linear-gradient(145deg, #1f4e8c, #6b9fd4);
+          border: 1px solid rgba(31, 78, 140, 0.16);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-family: var(--serif);
+          font-size: 2rem;
+          font-weight: 600;
+          color: var(--parchment);
+          letter-spacing: 0.02em;
+          overflow: hidden;
+        }
+        .team-photo {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+          object-position: center top;
+        }
+        .team-name {
+          font-family: var(--serif);
+          font-size: 1.2rem;
+          font-weight: 500;
+          line-height: 1.32;
+          margin-bottom: 0.35rem;
+        }
+        .team-meta {
+          font-family: var(--mono);
+          font-size: 10.5px;
+          color: var(--accent);
+          letter-spacing: 0.12em;
+          text-transform: uppercase;
+          margin-bottom: 0.75rem;
+        }
+        .team-contact {
+          display: grid;
+          gap: 0.35rem;
+          margin-top: 0.8rem;
+          font-size: 13px;
+          line-height: 1.65;
+          color: var(--ink-2);
+          font-weight: 300;
+        }
+        .team-note {
+          margin-top: 0.8rem;
+          font-size: 12px;
+          line-height: 1.6;
+          color: var(--ink-3);
+        }
+        .supervisor-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 1rem;
+        }
+        .supervisor-card {
+          background: var(--parchment2);
+          border: 1px solid var(--rule);
+          border-radius: var(--r-lg);
+          padding: 1.35rem;
+        }
+        .supervisor-role {
+          font-family: var(--mono);
+          font-size: 10.5px;
+          color: var(--accent);
+          letter-spacing: 0.14em;
+          text-transform: uppercase;
+          margin-bottom: 0.5rem;
+        }
+        .supervisor-name {
+          font-family: var(--serif);
+          font-size: 1.18rem;
+          font-weight: 500;
+          margin-bottom: 0.3rem;
+        }
+        .supervisor-title {
+          font-size: 13px;
+          line-height: 1.68;
+          color: var(--ink-2);
+          font-weight: 300;
+        }
+        .contact-grid {
+          display: grid;
+          grid-template-columns: 0.9fr 1.1fr;
+          gap: 1rem;
+          align-items: start;
+        }
+        .contact-links {
+          display: grid;
+          gap: 0.8rem;
+        }
+        .contact-line {
+          display: flex;
+          align-items: flex-start;
+          gap: 0.8rem;
+          padding: 1rem 1.05rem;
+          background: var(--parchment2);
+          border: 1px solid var(--rule);
+          border-radius: var(--r);
+          color: var(--ink-2);
+        }
+        .contact-line strong {
+          display: block;
+          font-family: var(--mono);
+          font-size: 10.5px;
+          letter-spacing: 0.12em;
+          text-transform: uppercase;
+          color: var(--accent);
+          margin-bottom: 0.2rem;
+        }
+        .contact-form {
+          display: grid;
+          gap: 0.9rem;
+        }
+        .field {
+          display: grid;
+          gap: 0.4rem;
+        }
+        .field label {
+          font-family: var(--mono);
+          font-size: 10.5px;
+          color: var(--accent);
+          letter-spacing: 0.12em;
+          text-transform: uppercase;
+        }
+        .field input,
+        .field textarea {
+          width: 100%;
+          padding: 0.95rem 1rem;
+          border: 1px solid var(--rule);
+          border-radius: 10px;
+          background: var(--parchment);
+          color: var(--ink);
+          font: inherit;
+          outline: none;
+        }
+        .field input:focus,
+        .field textarea:focus {
+          border-color: rgba(31, 78, 140, 0.25);
+          box-shadow: 0 0 0 3px rgba(31, 78, 140, 0.08);
+        }
+        .field textarea {
+          min-height: 160px;
+          resize: vertical;
+        }
+        .form-actions {
+          display: flex;
+          gap: 0.75rem;
+          flex-wrap: wrap;
+          align-items: center;
+        }
+        .note {
+          font-size: 12px;
+          color: var(--ink-3);
+          line-height: 1.6;
+        }
+
         /* footer */
         footer {
           background: #111113;
@@ -1042,6 +1737,12 @@ export default function Home() {
 
         /* responsive */
         @media (max-width: 980px) {
+          nav {
+            height: auto;
+            padding: 1rem 1.25rem;
+            gap: 0.8rem;
+            flex-wrap: wrap;
+          }
           .hero-grid {
             grid-template-columns: 1fr;
           }
@@ -1061,7 +1762,36 @@ export default function Home() {
             grid-template-columns: 1fr;
           }
           .n-links {
-            display: none;
+            width: 100%;
+            justify-content: flex-start;
+            flex-wrap: wrap;
+          }
+          .domain-grid,
+          .contact-grid,
+          .team-grid,
+          .supervisor-grid,
+          .section-grid.two-col,
+          .section-grid.three-col,
+          .tech-grid,
+          .resource-grid {
+            grid-template-columns: 1fr;
+          }
+          .survey-grid {
+            grid-template-columns: 1fr;
+          }
+          .milestone-row {
+            grid-template-columns: 1fr;
+            gap: 0.35rem;
+          }
+          .milestone-mark {
+            text-align: left;
+          }
+          .team-card {
+            grid-template-columns: 1fr;
+          }
+          .team-avatar {
+            width: 92px;
+            height: 92px;
           }
         }
 
@@ -1069,18 +1799,29 @@ export default function Home() {
           nav {
             padding: 0 1.25rem;
           }
+          .n-cta {
+            margin-left: auto;
+          }
           .hero-grid {
             padding: 4rem 1.25rem 3rem;
           }
           .stat {
             padding: 1.4rem 1.2rem;
           }
+          .site-section,
+          .abstract-sec,
+          .problem-sec,
+          .modules-sec,
+          .cta-sec {
+            padding-left: 1.25rem;
+            padding-right: 1.25rem;
+          }
         }
       `}</style>
 
       {/* ─────── NAV ─────── */}
       <nav>
-        <Link href="#" className="n-logo">
+        <Link href="#home" className="n-logo">
           <div className="n-icon">
             <HeartPulse size={18} />
           </div>
@@ -1089,10 +1830,15 @@ export default function Home() {
           </span>
         </Link>
         <div className="n-links">
+          <a href="#home">Home</a>
           <a href="#abstract">Abstract</a>
           <a href="#problem">Problem</a>
           <a href="#modules">Modules</a>
-          <a href="#cta">Pilot</a>
+          <a href="#domain">Domain</a>
+          <a href="#milestones">Milestones</a>
+          <a href="#documents">Documents</a>
+          <a href="#about">About</a>
+          <a href="#contact">Contact</a>
         </div>
         <Link href="/login" className="n-cta">
           Clinician Access
@@ -1100,7 +1846,7 @@ export default function Home() {
       </nav>
 
       {/* ─────── HERO ─────── */}
-      <section className="hero" ref={heroRef}>
+      <section id="home" className="hero" ref={heroRef}>
         <div className="hero-grid">
           {/* left */}
           <div>
@@ -1492,7 +2238,7 @@ export default function Home() {
                     publication-ready translational studies.
                   </p>
                   <a
-                    href="#"
+                    href="#contact"
                     className="btn-ghost"
                     style={{ alignSelf: "flex-start" }}
                   >
@@ -1501,6 +2247,370 @@ export default function Home() {
                 </div>
               </FadeUp>
             </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ─────── DOMAIN ─────── */}
+      <section id="domain" className="site-section">
+        <div className="section-inner">
+          <div className="section-head">
+            <FadeUp>
+              <span className="kicker">Domain</span>
+              <h2 className="sec-h2">
+                Literature, gap, and methods
+                <br />
+                for the research write-up
+              </h2>
+            </FadeUp>
+            <FadeUp delay={0.08}>
+              <p className="section-copy">
+                This section is structured so the paper content can be revised
+                without changing the visual layout. The current copy reflects
+                the project narrative already used across the homepage and code
+                base.
+              </p>
+            </FadeUp>
+          </div>
+
+          <div className="domain-grid">
+            <FadeUp>
+              <div className="card-shell soft">
+                <div className="card-kicker">Research Problem + Objectives</div>
+                <div className="card-title">
+                  One workflow, four inputs, one explainable decision view
+                </div>
+                <div className="card-body">
+                  HeartSense AI focuses on preserving clinical context from the
+                  first conversation through to the final recommendation. The
+                  system is built to reduce interpretation friction in cardiac
+                  triage by connecting language, signal, lab, and evidence in a
+                  single reviewable flow.
+                </div>
+                <div className="bullet-list">
+                  {DOMAIN_OBJECTIVES.map((item, index) => (
+                    <div className="bullet-item" key={item}>
+                      <span className="bullet-index">O{index + 1}</span>
+                      <span>{item}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="pill-row">
+                  <span className="pill">
+                    Focus <strong>Rural Sri Lanka</strong>
+                  </span>
+                  <span className="pill">
+                    Mode <strong>Explainable AI</strong>
+                  </span>
+                  <span className="pill">
+                    Stage <strong>Prototype</strong>
+                  </span>
+                </div>
+                <div style={{ height: "1rem" }} />
+                <div className="card-kicker">Research Gap</div>
+                <div className="bullet-list">
+                  {DOMAIN_GAP.map((item, index) => (
+                    <div className="bullet-item" key={item}>
+                      <span className="bullet-index">G{index + 1}</span>
+                      <span>{item}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </FadeUp>
+
+            <FadeUp delay={0.06}>
+              <div className="card-shell">
+                <div className="card-kicker">Literature Survey</div>
+                <div className="survey-grid">
+                  {DOMAIN_SURVEY.map((item) => (
+                    <div className="mini-card" key={item.title}>
+                      <h4>{item.title}</h4>
+                      <p>{item.body}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </FadeUp>
+          </div>
+
+          <div className="section-grid two-col" style={{ marginBottom: "1rem" }}>
+            <FadeUp delay={0.05}>
+              <div className="card-shell">
+                <div className="card-kicker">
+                  <Workflow size={13} style={{ display: "inline", marginRight: 6 }} />
+                  Methodology
+                </div>
+                <div className="card-title">Pipeline flowchart</div>
+                <div className="card-body" style={{ marginBottom: "1rem" }}>
+                  The flowchart below matches the project pipeline described in
+                  the homepage: Sinhala NLP, ECG, lab analysis, and evidence
+                  reasoning.
+                </div>
+                <div className="method-flow">
+                  {METHODOLOGY.map((step) => (
+                    <div className="flow-step" key={step.step}>
+                      <div className="card-kicker">Step {step.step}</div>
+                      <h4>{step.title}</h4>
+                      <p>{step.body}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </FadeUp>
+
+            <FadeUp delay={0.1}>
+              <div className="card-shell soft">
+                <div className="card-kicker">Technologies Used</div>
+                <div className="card-title">Actual stack reflected in the repo</div>
+                <div className="tech-grid">
+                  {TECHNOLOGIES.map((item) => (
+                    <div className="tech-item" key={item.name}>
+                      <h4>{item.name}</h4>
+                      <p>{item.body}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </FadeUp>
+          </div>
+        </div>
+      </section>
+
+      {/* ─────── MILESTONES ─────── */}
+      <section id="milestones" className="site-section site-section-alt">
+        <div className="section-inner">
+          <div className="section-head">
+            <FadeUp>
+              <span className="kicker">Milestones</span>
+              <h2 className="sec-h2">Key dates and assessment checkpoints</h2>
+            </FadeUp>
+            <FadeUp delay={0.06}>
+              <p className="section-copy">
+                Marks are shown as TBD because no published grades were shared.
+                If the department provides official marks later, the same rows
+                can be updated without changing the layout.
+              </p>
+            </FadeUp>
+          </div>
+
+          <div className="milestone-list">
+            {MILESTONES.map((item) => (
+              <FadeUp key={item.name}>
+                <div className="milestone-row">
+                  <div className="milestone-name">{item.name}</div>
+                  <div className="milestone-date">{item.date}</div>
+                  <div className="milestone-mark">{item.marks}</div>
+                </div>
+              </FadeUp>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ─────── DOCUMENTS ─────── */}
+      <section id="documents" className="site-section">
+        <div className="section-inner">
+          <div className="section-head">
+            <FadeUp>
+              <span className="kicker">Documents</span>
+              <h2 className="sec-h2">Proposal, paper, and shared documents</h2>
+            </FadeUp>
+            <FadeUp delay={0.06}>
+              <p className="section-copy">
+                External links open in a new tab. Items that were not shared are
+                clearly marked so the page can serve as a live checklist.
+              </p>
+            </FadeUp>
+          </div>
+
+          <div className="resource-grid">
+            {DOCUMENTS.map((item, index) => (
+              <FadeUp key={item.title} delay={index * 0.04}>
+                <div className="resource-card">
+                  <div className="resource-head">
+                    <div>
+                      <div className="card-kicker">Document</div>
+                      <div className="resource-title">{item.title}</div>
+                    </div>
+                    <div className="pill">{item.href ? "Available" : "Unavailable"}</div>
+                  </div>
+                  <div className="resource-note">{item.note}</div>
+                  {item.href ? (
+                    <a
+                      className="resource-link"
+                      href={item.href}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Open file <ExternalLink size={14} />
+                    </a>
+                  ) : (
+                    <span className="resource-link disabled">Coming soon</span>
+                  )}
+                </div>
+              </FadeUp>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ─────── ABOUT ─────── */}
+      <section id="about" className="site-section">
+        <div className="section-inner">
+          <div className="section-head">
+            <FadeUp>
+              <span className="kicker">About Us</span>
+              <h2 className="sec-h2">Team members and supervisors</h2>
+            </FadeUp>
+            <FadeUp delay={0.06}>
+              <p className="section-copy">
+                Team photos are loaded from the local images folder using the
+                filenames you provided.
+              </p>
+            </FadeUp>
+          </div>
+
+          <div className="team-grid">
+            {TEAM_MEMBERS.map((member, index) => (
+              <FadeUp key={member.name} delay={index * 0.04}>
+                <div className="team-card">
+                  <div className="team-avatar">
+                    <img
+                      src={member.photo}
+                      alt={member.name}
+                      className="team-photo"
+                    />
+                  </div>
+                  <div>
+                    <div className="team-meta">{member.role}</div>
+                    <div className="team-name">{member.name}</div>
+                    <div className="card-body">{member.note}</div>
+                    <div className="team-contact">
+                      {member.email ? (
+                        <span>
+                          Email: <a href={`mailto:${member.email}`}>{member.email}</a>
+                        </span>
+                      ) : (
+                        <span>Email: Not provided</span>
+                      )}
+                      <span>Phone: {member.phone}</span>
+                    </div>
+                  </div>
+                </div>
+              </FadeUp>
+            ))}
+          </div>
+
+          <div style={{ height: "1rem" }} />
+
+          <div className="supervisor-grid">
+            {SUPERVISORS.map((supervisor, index) => (
+              <FadeUp key={supervisor.name} delay={index * 0.05}>
+                <div className="supervisor-card">
+                  <div className="supervisor-role">{supervisor.role}</div>
+                  <div className="supervisor-name">{supervisor.name}</div>
+                  <div className="card-body">{supervisor.title}</div>
+                  <div className="pill-row">
+                    <span className="pill">{supervisor.email}</span>
+                  </div>
+                </div>
+              </FadeUp>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ─────── CONTACT ─────── */}
+      <section id="contact" className="site-section site-section-alt">
+        <div className="section-inner">
+          <div className="section-head">
+            <FadeUp>
+              <span className="kicker">Contact Us</span>
+              <h2 className="sec-h2">Open the email client or call directly</h2>
+            </FadeUp>
+            <FadeUp delay={0.06}>
+              <p className="section-copy">
+                There is no shared team inbox, so this page routes contact to
+                the lead email and opens the user's email client on submit.
+              </p>
+            </FadeUp>
+          </div>
+
+          <div className="contact-grid">
+            <FadeUp>
+              <div className="card-shell">
+                <div className="card-kicker">Direct Contact</div>
+                <div className="card-title">Lead contact details</div>
+                <div className="contact-links">
+                  <div className="contact-line">
+                    <Mail size={18} />
+                    <div>
+                      <strong>Email</strong>
+                      <div>
+                        <a href={`mailto:${PUBLIC_CONTACT_EMAIL}`}>
+                          {PUBLIC_CONTACT_EMAIL}
+                        </a>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="contact-line">
+                    <Phone size={18} />
+                    <div>
+                      <strong>Phone</strong>
+                      <div>{PUBLIC_CONTACT_PHONE}</div>
+                    </div>
+                  </div>
+                  <div className="contact-line">
+                    <Users size={18} />
+                    <div>
+                      <strong>Response mode</strong>
+                      <div>Open client / reply by email</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </FadeUp>
+
+            <FadeUp delay={0.06}>
+              <div className="card-shell soft">
+                <div className="card-kicker">Mail Form</div>
+                <div className="card-title">Write a message to the team</div>
+                <form className="contact-form" onSubmit={handleContactSubmit}>
+                  <div className="field">
+                    <label htmlFor="name">Name</label>
+                    <input id="name" name="name" type="text" placeholder="Your name" />
+                  </div>
+                  <div className="field">
+                    <label htmlFor="email">Email</label>
+                    <input id="email" name="email" type="email" placeholder="your.email@example.com" />
+                  </div>
+                  <div className="field">
+                    <label htmlFor="subject">Subject</label>
+                    <input id="subject" name="subject" type="text" placeholder="HeartSense AI research enquiry" />
+                  </div>
+                  <div className="field">
+                    <label htmlFor="message">Message</label>
+                    <textarea id="message" name="message" placeholder="Write your message here..." />
+                  </div>
+                  <div className="form-actions">
+                    <button type="submit" className="btn-primary">
+                      Open Email Client <ArrowRight size={15} />
+                    </button>
+                    <a
+                      className="btn-ghost"
+                      href={`mailto:${PUBLIC_CONTACT_EMAIL}`}
+                    >
+                      Send to lead email <ChevronRight size={14} />
+                    </a>
+                  </div>
+                  <div className="note">
+                    The form composes a mail draft locally and opens the user's
+                    email client. No backend mail service is required.
+                  </div>
+                </form>
+              </div>
+            </FadeUp>
           </div>
         </div>
       </section>
@@ -1549,10 +2659,15 @@ export default function Home() {
           <div className="f-nav-col">
             <div className="f-col-label">Navigation</div>
             <div className="f-links">
+              <a href="#home">Home</a>
               <a href="#abstract">Abstract</a>
               <a href="#problem">Problem Landscape</a>
               <a href="#modules">Framework Modules</a>
-              <a href="#cta">Pilot Access</a>
+              <a href="#domain">Domain</a>
+              <a href="#milestones">Milestones</a>
+              <a href="#documents">Documents</a>
+              <a href="#about">About</a>
+              <a href="#contact">Contact</a>
             </div>
           </div>
 
@@ -1560,10 +2675,10 @@ export default function Home() {
           <div className="f-nav-col">
             <div className="f-col-label">Research Info</div>
             <div className="f-links">
-              <a href="#">BSc Information Technology</a>
-              <a href="#">Software Engineering</a>
-              <a href="#">SLIIT Faculty of Computing</a>
-              <a href="#">Clinical Validation 2026</a>
+              <a href="mailto:idsdk847@gmail.com">idsdk847@gmail.com</a>
+              <a href="tel:+94750583003">+94 75 058 3003</a>
+              <a href="#contact">Open email form</a>
+              <a href="#about">Team and supervisors</a>
             </div>
           </div>
         </div>
